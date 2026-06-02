@@ -26,8 +26,8 @@ from mfo.core import (
     TranslationUnit,
 )
 from mfo.core.pipeline import Pipeline, Stage
-from mfo.storage import JsonStateStore, ProjectStore, import_pages
-from mfo.vision import PageOrder, discover_images
+from mfo.storage import JsonStateStore, ProjectStore, import_pages, preprocess_pages
+from mfo.vision import PageOrder, PreprocessConfig, discover_images, preprocess_file
 
 app = typer.Typer(
     add_completion=False,
@@ -157,6 +157,38 @@ def import_(
         typer.echo(f"  {len(scan.skipped)} file(s) skipped.")
 
 
+@app.command()
+def preprocess(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+    grayscale: Annotated[
+        bool, typer.Option("--grayscale", help="Normalize to grayscale instead of RGB.")
+    ] = False,
+    max_dimension: Annotated[
+        int | None,
+        typer.Option("--max-dim", help="Downscale analysis derivative to this longest edge."),
+    ] = None,
+    denoise: Annotated[bool, typer.Option("--denoise", help="Apply a denoising filter.")] = False,
+    deskew: Annotated[bool, typer.Option("--deskew", help="Estimate and correct page skew.")] = (
+        False
+    ),
+    force: Annotated[
+        bool, typer.Option("--force", help="Recompute even if a current derivative is cached.")
+    ] = False,
+) -> None:
+    """Build normalized analysis derivatives for imported pages (originals untouched)."""
+    config = PreprocessConfig(
+        grayscale=grayscale, max_dimension=max_dimension, denoise=denoise, deskew=deskew
+    )
+    with _open_store(path) as store:
+        pages = preprocess_pages(
+            store,
+            transform=lambda image_path: preprocess_file(image_path, config),
+            signature=config.signature(),
+            force=force,
+        )
+    typer.secho(f"Preprocessed {len(pages)} page(s).", fg=typer.colors.GREEN)
+
+
 def _stage_line(label: str, count: int, unit: str) -> str:
     mark = "✓" if count else "·"
     state = f"{count} {unit}" if count else "pending"
@@ -171,6 +203,7 @@ def status(
     with _open_store(path) as store:
         project = store.project
         pages = store.db.list(Page)
+        preprocessed = sum(1 for page in pages if page.preprocessing.get("cache_key"))
         regions = store.db.list(Region)
         ocr_spans = store.db.list(OCRSpan)
         units = store.db.list(TranslationUnit)
@@ -183,6 +216,7 @@ def status(
     typer.echo("")
     typer.echo("Stages:")
     typer.echo(_stage_line("import", len(pages), "pages"))
+    typer.echo(_stage_line("preprocess", preprocessed, "pages"))
     typer.echo(_stage_line("detect", len(regions), "regions"))
     typer.echo(_stage_line("ocr", len(ocr_spans), "spans"))
     typer.echo(_stage_line("translate", translated, "units"))

@@ -9,6 +9,23 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 1.2 — Preprocessing** (M1 Import & Preprocessing):
+  - `mfo.vision.preprocess`: pure, storage-free page preprocessing — color-space normalization
+    (RGB or `--grayscale`), optional downscale for analysis (`--max-dim`, recording the `scale`
+    so coordinates map back to the original — I-2), optional denoise (median filter) and deskew
+    (numpy projection-profile angle estimate), and orientation detection. Returns derivative PNG
+    bytes plus metadata; the original is read-only (I-1, FR-3).
+  - `mfo.storage.preprocess.preprocess_pages`: caches each page's derivative content-addressed by
+    `hash(source, config)` and records the metadata on `Page.preprocessing`. The image transform
+    is injected, so storage keeps no imaging dependency. Skips pages whose source+config are
+    unchanged (NFR-7/8), recomputes on `--force` or config change, and asserts the source is
+    byte-identical afterwards (I-1).
+  - `mfo preprocess` CLI command (`--grayscale`/`--max-dim`/`--denoise`/`--deskew`/`--force`);
+    `mfo status` now reports a preprocess stage line. Adds the `numpy` dependency.
+  - Tests: color normalization, grayscale, downscale+scale factor, orientation, denoise, skew
+    estimation on a synthetic skewed image, derivative caching + persisted metadata, idempotent
+    skip, force/config-change recompute, non-destructive source check, and CLI end-to-end.
+  - Satisfies: FR-3, NFR-5, NFR-7, NFR-8; spec §10.2.
 - **Batch 1.1 — Directory import & page ordering** (M1 Import & Preprocessing):
   - `mfo.vision.images`: a Pillow-backed image adapter (`read_image_size`, `SUPPORTED_SUFFIXES`
     for PNG/JPG/JPEG/WEBP/TIFF) that raises a clear `ImageError` on unreadable files (NFR-17).
@@ -98,8 +115,8 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   `CHANGELOG.md`. Derived from `mfo_design_notes_spec.md`.
 
 ### Notes
-- **Milestone M0 (Foundation) complete.** M1 in progress; next up: **batch 1.2 — Preprocessing**
-  (color normalization, optional downscale/deskew/denoise, orientation; originals untouched).
+- **Milestone M0 (Foundation) complete.** M1 in progress; next up: **batch 1.3 — Resume & project
+  save (consolidation)**: end-to-end `init → import → preprocess`, save/reopen, resume mid-import.
 
 <!--
 Template for a landed batch:

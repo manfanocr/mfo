@@ -124,7 +124,7 @@ plugs into.
 - **DoD:** Import a sample folder; ordering strategies tested incl. `1,2,10` natural sort;
   corrupt file skipped with clear warning.
 
-### Batch 1.2 — Preprocessing
+### Batch 1.2 — Preprocessing ✅ *(landed — see CHANGELOG)*
 - **Scope:** Normalize color space, optional downscale for analysis (keep original for render),
   optional deskew/denoise (off by default), page orientation detection. Store preprocessing
   metadata on `Page`.

@@ -10,6 +10,7 @@ from mfo.storage.ingest import SourceImage, import_pages
 from mfo.storage.layout import DB_NAME, MANIFEST_NAME, SUBDIRS, ProjectLayout
 from mfo.storage.manifest import MANIFEST_VERSION, Manifest, read_manifest, write_manifest
 from mfo.storage.pipeline_state import JsonStateStore
+from mfo.storage.preprocess import preprocess_pages
 from mfo.storage.project import ProjectStore
 
 __all__ = [
@@ -40,6 +41,8 @@ __all__ = [
     # ingest
     "import_pages",
     "SourceImage",
+    # preprocess
+    "preprocess_pages",
     # project
     "ProjectStore",
 ]

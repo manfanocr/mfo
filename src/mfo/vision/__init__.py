@@ -15,6 +15,13 @@ from mfo.vision.ingest import (
     SkippedImage,
     discover_images,
 )
+from mfo.vision.preprocess import (
+    PreprocessConfig,
+    detect_orientation,
+    estimate_skew_angle,
+    preprocess_file,
+    preprocess_image,
+)
 
 __all__ = [
     # images
@@ -28,4 +35,10 @@ __all__ = [
     "PageOrder",
     "SkippedImage",
     "discover_images",
+    # preprocess
+    "PreprocessConfig",
+    "detect_orientation",
+    "estimate_skew_angle",
+    "preprocess_file",
+    "preprocess_image",
 ]

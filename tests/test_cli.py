@@ -122,6 +122,25 @@ def test_import_missing_source_exits_1(tmp_path: Path) -> None:
     assert result.exit_code == 1
 
 
+def test_preprocess_builds_derivatives_and_status_reports(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    source = tmp_path / "src"
+    source.mkdir()
+    _make_png(source / "p1.png")
+    runner.invoke(app, ["import", str(target), str(source)])
+
+    result = runner.invoke(app, ["preprocess", str(target), "--max-dim", "2"])
+    assert result.exit_code == 0, result.stdout
+    assert "Preprocessed 1 page(s)" in result.stdout
+
+    with ProjectStore.open(target) as store:
+        assert store.db.list(Page)[0].preprocessing.get("cache_key")
+
+    status = runner.invoke(app, ["status", str(target)])
+    assert "preprocess" in status.stdout
+
+
 def test_config_file_provides_defaults(tmp_path: Path) -> None:
     config = tmp_path / "mfo.toml"
     config.write_text('[mfo]\nsource_lang = "ko"\ntarget_lang = "en"\n')
