@@ -13,6 +13,7 @@ from mfo.storage.confidence import (
 )
 from mfo.storage.db import SCHEMA_VERSION, Database
 from mfo.storage.detect import RegionCandidate, detect_regions
+from mfo.storage.grouping import group_into_units
 from mfo.storage.hashing import content_key, sha256_bytes, sha256_file
 from mfo.storage.ingest import SourceImage, import_pages
 from mfo.storage.layout import DB_NAME, MANIFEST_NAME, SUBDIRS, ProjectLayout
@@ -67,6 +68,8 @@ __all__ = [
     "RecognizedSpan",
     # reading order
     "assign_reading_order",
+    # grouping
+    "group_into_units",
     # project
     "ProjectStore",
 ]

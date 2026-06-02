@@ -1,10 +1,10 @@
 """The ``mfo`` command-line application (spec FR-46, FR-47).
 
 Commands are deliberately thin: they resolve configuration and a project, then delegate to the
-core/storage/vision layers. ``init``, ``import``, ``preprocess``, ``detect``, ``ocr``, ``order``,
-``flag``, ``status``, and ``run`` (the pipeline orchestrator) are functional; ``export`` and
-``review`` are
-wired to a real project but their processing bodies arrive in later milestones (batches 5.3, 6.2).
+core/storage/vision layers. ``init``, ``import``, ``preprocess``, ``detect``, ``order``, ``group``,
+``ocr``, ``flag``, ``status``, and ``run`` (the pipeline orchestrator) are functional; ``export``
+and ``review`` are wired to a real project but their processing bodies arrive in later milestones
+(batches 5.3, 6.2).
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from mfo.cli.logging import configure_logging, get_logger
 from mfo.cli.stages import (
     build_pipeline,
     save_detect_config,
+    save_group_config,
     save_import_config,
     save_ocr_config,
     save_preprocess_config,
@@ -35,6 +36,7 @@ from mfo.core import (
     RenderArtifact,
     TranslationUnit,
 )
+from mfo.core.grouping import DEFAULT_GAP_RATIO
 from mfo.storage import (
     JsonStateStore,
     ProjectStore,
@@ -42,6 +44,7 @@ from mfo.storage import (
     confidence_report,
     detect_regions,
     flag_low_confidence,
+    group_into_units,
     import_pages,
     ocr_regions,
     preprocess_pages,
@@ -297,6 +300,27 @@ def order(
     typer.secho(f"Ordered {len(regions)} region(s) ({resolved}).", fg=typer.colors.GREEN)
 
 
+@app.command()
+def group(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+    max_gap_ratio: Annotated[
+        float,
+        typer.Option(
+            "--max-gap",
+            help="Chain regions whose edge gap is within this fraction of their mean height.",
+        ),
+    ] = DEFAULT_GAP_RATIO,
+    force: Annotated[
+        bool, typer.Option("--force", help="Recompute even if current grouping is cached.")
+    ] = False,
+) -> None:
+    """Group ordered regions into conversation chains / translation units (offline — FR-19)."""
+    with _open_store(path) as store:
+        save_group_config(store, max_gap_ratio)
+        units = group_into_units(store, max_gap_ratio=max_gap_ratio, force=force)
+    typer.secho(f"Grouped regions into {len(units)} unit(s).", fg=typer.colors.GREEN)
+
+
 def _stage_line(label: str, count: int, unit: str) -> str:
     mark = "✓" if count else "·"
     state = f"{count} {unit}" if count else "pending"
@@ -332,6 +356,7 @@ def status(
     typer.echo(_stage_line("preprocess", preprocessed, "pages"))
     typer.echo(_stage_line("detect", len(regions), "regions"))
     typer.echo(_stage_line("order", ordered, "regions"))
+    typer.echo(_stage_line("group", len(units), "units"))
     typer.echo(_stage_line("ocr", len(ocr_spans), "spans"))
     typer.echo(_stage_line("translate", translated, "units"))
     typer.echo(_stage_line("render", len(renders), "pages"))

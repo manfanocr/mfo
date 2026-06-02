@@ -178,7 +178,7 @@ plugs into.
 - **Satisfies:** FR-16, FR-17, FR-20 (data hook); MVP-5; §10.5.
 - **DoD:** Correct order on RTL sample pages; LTR/TTB toggle tested.
 
-### Batch 3.2 — Dialogue grouping
+### Batch 3.2 — Dialogue grouping ✅ *(landed — see CHANGELOG)*
 - **Scope:** Group regions into `TranslationUnit`s (proximity, type, order); ordered region
   IDs preserved; conversation-chain heuristic.
 - **Satisfies:** FR-11, FR-19; G-3; §10.5.

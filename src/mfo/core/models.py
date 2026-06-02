@@ -74,6 +74,8 @@ class Page(MfoModel):
     ocr: dict[str, Any] = Field(default_factory=dict)
     # Reading-order provenance (direction + regions signature), for cache/skip (NFR-8).
     structure: dict[str, Any] = Field(default_factory=dict)
+    # Dialogue-grouping provenance (params + regions signature), for cache/skip (NFR-8).
+    grouping: dict[str, Any] = Field(default_factory=dict)
 
 
 class Region(MfoModel):
@@ -114,6 +116,8 @@ class TranslationUnit(MfoModel):
     """A logical dialogue unit grouping one or more regions (spec FR-19)."""
 
     id: str = Field(default_factory=partial(new_id, "tu"))
+    # The page this unit belongs to, for the source → unit link graph (I-2) and per-page recompute.
+    page_id: str = ""
     ordered_region_ids: list[str] = Field(default_factory=list)
     source_bundle: str = ""
     context_bundle: dict[str, Any] = Field(default_factory=dict)

@@ -19,11 +19,13 @@ import hashlib
 from pathlib import Path
 
 from mfo.core.enums import ReadingDirection
+from mfo.core.grouping import DEFAULT_GAP_RATIO
 from mfo.core.pipeline import Pipeline, Stage
 from mfo.storage import (
     ProjectStore,
     assign_reading_order,
     detect_regions,
+    group_into_units,
     import_pages,
     ocr_regions,
     preprocess_pages,
@@ -45,6 +47,7 @@ IMPORT_STAGE = "import"
 PREPROCESS_STAGE = "preprocess"
 DETECT_STAGE = "detect"
 STRUCTURE_STAGE = "structure"
+GROUP_STAGE = "group"
 OCR_STAGE = "ocr"
 
 
@@ -137,6 +140,22 @@ class StructureStage:
         assign_reading_order(ctx, direction=self._direction)
 
 
+class GroupStage:
+    """Group each page's ordered regions into translation units (idempotent, offline, no OCR)."""
+
+    name = GROUP_STAGE
+    deps: tuple[str, ...] = (STRUCTURE_STAGE,)
+
+    def __init__(self, max_gap_ratio: float) -> None:
+        self._max_gap_ratio = max_gap_ratio
+
+    def inputs_hash(self, ctx: ProjectStore) -> str:
+        return f"grouping@1|{self._max_gap_ratio}"
+
+    def run(self, ctx: ProjectStore) -> None:
+        group_into_units(ctx, max_gap_ratio=self._max_gap_ratio)
+
+
 class OcrStage:
     """Recognize text on each region and persist it as OCR spans (idempotent, OCR ≠ translation)."""
 
@@ -203,6 +222,13 @@ def save_structure_config(store: ProjectStore, direction: ReadingDirection) -> N
     store.set_project(store.project.model_copy(update={"config": project_config}))
 
 
+def save_group_config(store: ProjectStore, max_gap_ratio: float) -> None:
+    """Persist the grouping knob so ``mfo run`` reproduces the same units (FR-19, FR-48)."""
+    project_config = dict(store.project.config)
+    project_config["group"] = {"max_gap_ratio": max_gap_ratio}
+    store.set_project(store.project.model_copy(update={"config": project_config}))
+
+
 def save_ocr_config(store: ProjectStore, engine: str) -> None:
     """Persist the chosen OCR engine so ``mfo run`` uses the same one (NFR-17, FR-48)."""
     project_config = dict(store.project.config)
@@ -214,11 +240,11 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
     """Assemble the pipeline from the project's persisted configuration.
 
     The import stage only exists once a source has been configured (via ``mfo import``); the
-    preprocess, detect, and structure (reading-order) stages use their saved config if present,
-    otherwise their zero-dependency defaults — structure is geometry-only so it stays on the
-    offline path. OCR is opt-in: its default engine (manga-ocr) is an optional install, so the OCR
-    stage joins the pipeline only once an engine has been chosen via ``mfo ocr``. Later milestones
-    register translate → render here.
+    preprocess, detect, structure (reading-order), and group (dialogue-chain) stages use their saved
+    config if present, otherwise their zero-dependency defaults — structure and grouping are
+    geometry-only so they stay on the offline path. OCR is opt-in: its default engine (manga-ocr) is
+    an optional install, so the OCR stage joins the pipeline only once an engine has been chosen via
+    ``mfo ocr``. Later milestones register translate → render here.
     """
     stages: list[Stage[ProjectStore]] = []
     config = store.project.config
@@ -243,6 +269,9 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
             structure_config.get("direction", store.project.reading_direction.value)
         )
         stages.append(StructureStage(direction))
+
+        group_config = config.get("group") or {}
+        stages.append(GroupStage(group_config.get("max_gap_ratio", DEFAULT_GAP_RATIO)))
 
         ocr_config = config.get("ocr")
         if ocr_config is not None:

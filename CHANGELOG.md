@@ -9,6 +9,33 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 3.2 — Dialogue grouping** (M3 Structure inference):
+  - `mfo.core.grouping.group_regions`: a pure heuristic that partitions a page's (reading-ordered)
+    regions into conversation chains. Walking regions in reading order, it chains a region onto the
+    previous one when they share a region type (SFX never chains) and their edge-to-edge gap is within
+    a configurable fraction of their mean height (default 0.4) — rejoining a single utterance split
+    across stacked bubbles while leaving distinct utterances separate (FR-19, G-3). Like reading order,
+    it is geometry + type only, so it needs no imaging or OCR dependency; it does not mutate its inputs
+    and is the seam the review editor (M6) reuses for merge/split.
+  - `mfo.storage.grouping.group_into_units`: turns each chain into one `TranslationUnit` carrying the
+    ordered region IDs and its `page_id`, establishing the page → unit → region link graph (I-2). The
+    unit's `source_bundle` is left empty here — assembling source text from OCR belongs to the
+    translation/context stage (M4), keeping grouping independent of (and parallel to) OCR. Each page
+    records a grouping signature folding its regions' geometry/type/order and the grouping params; a
+    re-run skips unchanged pages (NFR-8) and a re-detection or re-ordering invalidates it. Recomputing
+    a page drops its prior units first (idempotent, no orphans); because the skip is signature-driven,
+    existing units (and any translations they later carry) are only rebuilt on a real input change or
+    `--force`, so automation never silently discards them (I-3). Adds a `Page.grouping` field, a
+    `TranslationUnit.page_id` field, and DB migration 002 indexing `translation_units.page_id`.
+  - `GroupStage` (deps: structure) is wired into the pipeline and, being geometry-only, is **always
+    on** like reading order. New `mfo group` command (`--max-gap`/`--force`) persists the knob and
+    reports the unit count; `mfo status` gains a `group` stage line.
+  - Tests: core heuristic (close-chains/far-separate, type mismatch, SFX exclusion, transitive
+    chaining, reading-order vs input order, configurable threshold, non-mutation); storage unit
+    creation + provenance + reopen, idempotent skip, gap-ratio-change recompute, forced-recompute
+    replaces (no orphans), re-detection invalidation, region-less page skip; CLI `group` creation +
+    status line, config persistence, and `run` including the group stage.
+  - Satisfies: FR-11, FR-19; G-3; MVP-5; I-2, I-3; NFR-8; spec §10.5.
 - **Batch 3.1 — Reading order** (M3 Structure inference; first batch of M3):
   - `mfo.core.reading_order.order_regions`: a pure, tier-aware manga reading-order heuristic. Regions
     are grouped into horizontal tiers by vertical overlap, tiers are read top-to-bottom, and each tier
@@ -228,8 +255,9 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   complete; M3 (Structure inference) started.** M2's MVP scope landed across 2.1 (detection), 2.3
   (Japanese OCR), and 2.4 (confidence surfacing); the optional **batch 2.2 — ML detector adapter**
   can be picked up any time, as it is not on the MVP-critical path. M3 began with 3.1 (reading
-  order). Next up: **batch 3.2 — dialogue grouping** (M3 Structure): grouping ordered regions into
-  `TranslationUnit`s via proximity/type/order with a conversation-chain heuristic.
+  order) and 3.2 (dialogue grouping). Next up: **batch 3.3 — panel detection** (M3 Structure,
+  optional/light): best-effort panel boundaries to refine reading order, or cleanly disabled — after
+  which M3 is complete and **M4 — Translation** (batch 4.1, adapter + context builder) begins.
 
 <!--
 Template for a landed batch:

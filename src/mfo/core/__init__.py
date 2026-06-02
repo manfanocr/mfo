@@ -16,6 +16,7 @@ from mfo.core.enums import (
     TranslationStyle,
 )
 from mfo.core.geometry import BBox, Point
+from mfo.core.grouping import group_regions
 from mfo.core.ids import new_id, new_ulid
 from mfo.core.models import (
     EditRecord,
@@ -46,6 +47,8 @@ __all__ = [
     "is_low_confidence",
     # reading order
     "order_regions",
+    # grouping
+    "group_regions",
     # ids
     "new_id",
     "new_ulid",

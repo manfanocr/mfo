@@ -44,7 +44,7 @@ _TABLES: dict[type[MfoModel], _Table] = {
     Page: _Table("pages", {"project_id": "project_id", "idx": "index"}),
     Region: _Table("regions", {"page_id": "page_id"}),
     OCRSpan: _Table("ocr_spans", {"region_id": "region_id"}),
-    TranslationUnit: _Table("translation_units", {}),
+    TranslationUnit: _Table("translation_units", {"page_id": "page_id"}),
     EditRecord: _Table("edit_records", {"translation_unit_id": "translation_unit_id"}),
     RenderArtifact: _Table("render_artifacts", {"page_id": "page_id"}),
 }
@@ -67,8 +67,23 @@ def _migration_001(conn: sqlite3.Connection) -> None:
             )
 
 
+def _migration_002(conn: sqlite3.Connection) -> None:
+    """Index ``translation_units.page_id`` so dialogue grouping can query/recompute per page.
+
+    A fresh database already has the column (``_migration_001`` builds from the current table
+    definitions), so the ``ADD COLUMN`` is guarded; existing databases pick it up here. The index
+    creation is idempotent either way.
+    """
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(translation_units)")}
+    if "page_id" not in columns:
+        conn.execute("ALTER TABLE translation_units ADD COLUMN page_id TEXT")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_translation_units_page_id ON translation_units (page_id)"
+    )
+
+
 # Ordered list of migrations; the schema version is the number applied.
-_MIGRATIONS = [_migration_001]
+_MIGRATIONS = [_migration_001, _migration_002]
 SCHEMA_VERSION = len(_MIGRATIONS)
 
 
