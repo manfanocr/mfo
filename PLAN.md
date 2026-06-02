@@ -90,7 +90,7 @@ plugs into.
 - **DoD:** Models serialize/deserialize losslessly; property tests for ID stability and
   round-trip. No I/O yet.
 
-### Batch 0.3 — Persistence layer
+### Batch 0.3 — Persistence layer ✅ *(landed — see CHANGELOG)*
 - **Scope:** `storage/` — project directory layout (§15), `manifest.json` writer/reader,
   SQLite schema + migrations for relational data, cache directory abstraction with content
   hashing, atomic writes (crash-safe).

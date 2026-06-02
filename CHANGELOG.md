@@ -9,6 +9,19 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 0.3 — Persistence layer** (M0 Foundation):
+  - `mfo.storage`: project directory layout (`ProjectLayout`, spec §15), human-readable
+    `manifest.json` reader/writer (`Manifest`), and a `ProjectStore` facade for
+    create/open/save that refuses to overwrite an existing project (I-1).
+  - SQLite store (`Database`) with `PRAGMA user_version` migrations and typed, generic entity
+    CRUD (`save`/`save_all`/`get`/`list`); each entity is stored as a JSON blob plus indexed
+    columns, with `where`/`order_by` validated against known columns to stay injection-safe.
+  - Crash-safe `atomic_write_bytes`/`atomic_write_text` (temp + fsync + `os.replace`) and a
+    content-addressed `Cache` with SHA-256 hashing helpers (`content_key`, `sha256_file`).
+  - Moved the canonical `id` field onto the `MfoModel` base.
+  - Tests: atomic-write crash safety, cache round-trip, DB migration/idempotent-reopen,
+    entity CRUD round-trip, and ProjectStore create/open/persist.
+  - Satisfies: I-1, I-5, FR-4, FR-48, NFR-10, NFR-11, NFR-26, NFR-27; spec §11.2, §15.
 - **Batch 0.2 — Core data model** (M0 Foundation):
   - `mfo.core` entities (Pydantic v2): `Project, Page, Region, OCRSpan, TranslationCandidate,
     TranslationUnit, EditRecord, RenderArtifact`, plus geometry primitives (`BBox`, `Point`) and
@@ -36,7 +49,7 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   `CHANGELOG.md`. Derived from `mfo_design_notes_spec.md`.
 
 ### Notes
-- Next up: **batch 0.3 — Persistence layer** (project directory, manifest, SQLite, atomic writes).
+- Next up: **batch 0.4 — CLI skeleton & config** (`init`, `run`, `status`, `export`, `review`).
 
 <!--
 Template for a landed batch:

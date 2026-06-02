@@ -34,9 +34,14 @@ def _utcnow() -> datetime:
 
 
 class MfoModel(BaseModel):
-    """Base model: forbid unknown fields for strict, stable schemas."""
+    """Base model: a stable, self-describing ``id`` and strict (no unknown) fields.
+
+    Subclasses override ``id`` with an entity-specific prefixed default factory.
+    """
 
     model_config = ConfigDict(extra="forbid")
+
+    id: str
 
 
 class Project(MfoModel):
