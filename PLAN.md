@@ -141,7 +141,7 @@ plugs into.
 
 ## M2 — Vision: Detection & OCR  (MVP-3, MVP-4, MVP-11)
 
-### Batch 2.1 — Region detection adapter + baseline
+### Batch 2.1 — Region detection adapter + baseline ✅ *(landed — see CHANGELOG)*
 - **Scope:** `RegionDetector` adapter interface; a dependency-light OpenCV baseline detector
   (connected-components / bubble heuristics) so the project works with **no model download**;
   outputs `Region` (bbox/polygon, type guess, confidence).

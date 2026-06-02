@@ -131,6 +131,18 @@ class Database:
             values,
         )
 
+    def delete(self, model: type[T], *, where: tuple[str, object]) -> int:
+        """Delete rows of ``model`` matching an indexed column. Returns the rows removed.
+
+        ``where`` is validated against the table's known columns to stay injection-safe.
+        """
+        table = self._table(model)
+        column, value = where
+        self._require_column(column, {"id", *table.index_columns})
+        cursor = self._conn.execute(f"DELETE FROM {table.name} WHERE {column} = ?", (value,))
+        self._conn.commit()
+        return cursor.rowcount
+
     # -- reads ----------------------------------------------------------------------------
 
     def get(self, model: type[T], entity_id: str) -> T | None:

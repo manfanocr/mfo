@@ -68,6 +68,8 @@ class Page(MfoModel):
     width: int = Field(ge=0)
     height: int = Field(ge=0)
     preprocessing: dict[str, Any] = Field(default_factory=dict)
+    # Detection provenance for this page (detector id + input signature), for cache/skip (NFR-8).
+    detection: dict[str, Any] = Field(default_factory=dict)
 
 
 class Region(MfoModel):

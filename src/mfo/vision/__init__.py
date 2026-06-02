@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+from mfo.vision.detect import (
+    BaselineConfig,
+    ConnectedComponentsDetector,
+    DetectedRegion,
+    RegionDetector,
+    baseline_detector,
+    detect_file,
+    get_detector,
+)
 from mfo.vision.images import (
     SUPPORTED_SUFFIXES,
     ImageError,
@@ -24,6 +33,14 @@ from mfo.vision.preprocess import (
 )
 
 __all__ = [
+    # detect
+    "BaselineConfig",
+    "ConnectedComponentsDetector",
+    "DetectedRegion",
+    "RegionDetector",
+    "baseline_detector",
+    "detect_file",
+    "get_detector",
     # images
     "SUPPORTED_SUFFIXES",
     "ImageError",

@@ -1,9 +1,9 @@
 """The ``mfo`` command-line application (spec FR-46, FR-47).
 
 Commands are deliberately thin: they resolve configuration and a project, then delegate to the
-core/storage/vision layers. ``init``, ``import``, ``status``, and ``run`` (the pipeline
-orchestrator) are functional; ``export`` and ``review`` are wired to a real project but their
-processing bodies arrive in later milestones (batches 5.3, 6.2).
+core/storage/vision layers. ``init``, ``import``, ``preprocess``, ``detect``, ``status``, and
+``run`` (the pipeline orchestrator) are functional; ``export`` and ``review`` are wired to a real
+project but their processing bodies arrive in later milestones (batches 5.3, 6.2).
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from mfo.cli.config import build_settings
 from mfo.cli.logging import configure_logging, get_logger
 from mfo.cli.stages import (
     build_pipeline,
+    save_detect_config,
     save_import_config,
     save_preprocess_config,
 )
@@ -30,8 +31,21 @@ from mfo.core import (
     RenderArtifact,
     TranslationUnit,
 )
-from mfo.storage import JsonStateStore, ProjectStore, import_pages, preprocess_pages
-from mfo.vision import PageOrder, PreprocessConfig, discover_images, preprocess_file
+from mfo.storage import (
+    JsonStateStore,
+    ProjectStore,
+    detect_regions,
+    import_pages,
+    preprocess_pages,
+)
+from mfo.vision import (
+    PageOrder,
+    PreprocessConfig,
+    detect_file,
+    discover_images,
+    get_detector,
+    preprocess_file,
+)
 
 app = typer.Typer(
     add_completion=False,
@@ -193,6 +207,34 @@ def preprocess(
             force=force,
         )
     typer.secho(f"Preprocessed {len(pages)} page(s).", fg=typer.colors.GREEN)
+
+
+@app.command()
+def detect(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+    detector: Annotated[
+        str, typer.Option("--detector", help="Region detector to use.")
+    ] = "baseline",
+    force: Annotated[
+        bool, typer.Option("--force", help="Re-detect even if a current result is cached.")
+    ] = False,
+) -> None:
+    """Detect text regions on imported pages (offline baseline; no model download)."""
+    try:
+        engine = get_detector(detector)
+    except ValueError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from None
+    signature = f"{engine.name}@{engine.version}"
+    with _open_store(path) as store:
+        save_detect_config(store, detector)
+        regions = detect_regions(
+            store,
+            detect=lambda image_path: detect_file(image_path, engine),
+            signature=signature,
+            force=force,
+        )
+    typer.secho(f"Detected {len(regions)} region(s).", fg=typer.colors.GREEN)
 
 
 def _stage_line(label: str, count: int, unit: str) -> str:

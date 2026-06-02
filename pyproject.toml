@@ -26,6 +26,7 @@ dependencies = [
     "typer>=0.12",
     "pillow>=10.0",
     "numpy>=1.26",
+    "opencv-python-headless>=4.9",
 ]
 
 [project.optional-dependencies]

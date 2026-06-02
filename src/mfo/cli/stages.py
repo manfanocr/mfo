@@ -19,11 +19,25 @@ import hashlib
 from pathlib import Path
 
 from mfo.core.pipeline import Pipeline, Stage
-from mfo.storage import ProjectStore, import_pages, preprocess_pages
-from mfo.vision import PageOrder, PreprocessConfig, discover_images, preprocess_file
+from mfo.storage import (
+    ProjectStore,
+    detect_regions,
+    import_pages,
+    preprocess_pages,
+)
+from mfo.vision import (
+    PageOrder,
+    PreprocessConfig,
+    RegionDetector,
+    detect_file,
+    discover_images,
+    get_detector,
+    preprocess_file,
+)
 
 IMPORT_STAGE = "import"
 PREPROCESS_STAGE = "preprocess"
+DETECT_STAGE = "detect"
 
 
 class ImportStage:
@@ -76,6 +90,29 @@ class PreprocessStage:
         )
 
 
+class DetectStage:
+    """Detect text regions on each page and persist them (idempotent, source-space coords)."""
+
+    name = DETECT_STAGE
+    deps: tuple[str, ...] = (PREPROCESS_STAGE,)
+
+    def __init__(self, detector: RegionDetector) -> None:
+        self._detector = detector
+
+    def _signature(self) -> str:
+        return f"{self._detector.name}@{self._detector.version}"
+
+    def inputs_hash(self, ctx: ProjectStore) -> str:
+        return self._signature()
+
+    def run(self, ctx: ProjectStore) -> None:
+        detect_regions(
+            ctx,
+            detect=lambda path: detect_file(path, self._detector),
+            signature=self._signature(),
+        )
+
+
 def save_import_config(
     store: ProjectStore,
     *,
@@ -105,12 +142,19 @@ def save_preprocess_config(store: ProjectStore, config: PreprocessConfig) -> Non
     store.set_project(store.project.model_copy(update={"config": project_config}))
 
 
+def save_detect_config(store: ProjectStore, detector: str) -> None:
+    """Persist the chosen detector so ``mfo run`` uses the same one (NFR-17, FR-48)."""
+    project_config = dict(store.project.config)
+    project_config["detect"] = {"detector": detector}
+    store.set_project(store.project.model_copy(update={"config": project_config}))
+
+
 def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
     """Assemble the pipeline from the project's persisted configuration.
 
     The import stage only exists once a source has been configured (via ``mfo import``); the
-    preprocess stage uses its saved config if present, otherwise defaults. Later milestones
-    register detect → ocr → structure → translate → render here.
+    preprocess and detect stages use their saved config if present, otherwise defaults. Later
+    milestones register ocr → structure → translate → render here.
     """
     stages: list[Stage[ProjectStore]] = []
     config = store.project.config
@@ -126,5 +170,8 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
         )
         preprocess_config = config.get("preprocess") or {}
         stages.append(PreprocessStage(PreprocessConfig(**preprocess_config)))
+
+        detect_config = config.get("detect") or {}
+        stages.append(DetectStage(get_detector(detect_config.get("detector", "baseline"))))
 
     return Pipeline(stages)

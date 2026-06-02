@@ -9,6 +9,27 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 2.1 — Region detection adapter + baseline** (M2 Vision — Detection & OCR):
+  - `mfo.vision.detect`: a swappable `RegionDetector` protocol (NFR-17) plus the default
+    `ConnectedComponentsDetector` — a dependency-light OpenCV baseline (Otsu threshold → morphological
+    close to merge glyphs → connected-components boxing) that runs CPU-only with **no model download**
+    (NFR-21). It returns `DetectedRegion` boxes in source-image pixel space (I-2) with a coarse
+    shape-based type guess (bubble/narration/side-text) and a bounded confidence score (I-4). A small
+    name→factory registry (`get_detector`) resolves detectors by config name.
+  - `mfo.storage.detect.detect_regions`: persists a `Region` per detected box linked to its page, with
+    the detection callable *injected* so storage stays imaging-free (mirrors preprocess). Each page
+    records a detection signature `hash(source, detector-id)`; re-running skips unchanged pages (NFR-8)
+    and a (re)detected page has its prior regions cleared first, so detection is idempotent and a
+    forced recompute leaves no stale boxes. Adds `Database.delete` and a `Page.detection` field.
+  - `DetectStage` (deps: preprocess) wired into the pipeline; `mfo detect` CLI command
+    (`--detector`/`--force`) persists the chosen detector so `mfo run` reproduces it. `mfo status`
+    already surfaces the region count.
+  - Tests: baseline detection on a synthetic page (shapes → types, reading-order sort, bounded
+    confidence, blank/speck rejection), detector registry + unknown-detector error, `detect_file`
+    round-trip; storage persistence + page linkage + signature, idempotent skip, force/detector-change
+    recompute without duplicates; CLI detect end-to-end, unknown-detector exit, and pipeline inclusion.
+    Adds the `opencv-python-headless` dependency.
+  - Satisfies: FR-10, FR-11, NFR-17, NFR-21; MVP-3; I-2, I-4; spec §10.3.
 - **Batch 1.3 — Resume & project save (consolidation)** (M1 Import & Preprocessing — completes M1):
   - `mfo.cli.stages`: the first concrete pipeline stages — `ImportStage` and `PreprocessStage` —
     wired into the orchestrator from batch 0.5. Each runs through the same idempotent storage/vision
@@ -133,9 +154,9 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   `CHANGELOG.md`. Derived from `mfo_design_notes_spec.md`.
 
 ### Notes
-- **Milestones M0 (Foundation) and M1 (Import & Preprocessing) complete.** Next up: **M2 — Vision**,
-  starting with **batch 2.1 — Region detection adapter + baseline**: an adapter interface plus a
-  dependency-light OpenCV baseline detector that works with no model download.
+- **Milestones M0 (Foundation) and M1 (Import & Preprocessing) complete; M2 (Vision) in progress.**
+  Next up: **batch 2.2 — ML detector adapter (optional)**: an adapter for a trained bubble/text
+  detector with lazy model download that falls back to the baseline if the model is absent.
 
 <!--
 Template for a landed batch:

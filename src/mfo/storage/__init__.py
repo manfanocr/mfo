@@ -5,6 +5,7 @@ from __future__ import annotations
 from mfo.storage.atomic import atomic_write_bytes, atomic_write_text
 from mfo.storage.cache import Cache
 from mfo.storage.db import SCHEMA_VERSION, Database
+from mfo.storage.detect import RegionCandidate, detect_regions
 from mfo.storage.hashing import content_key, sha256_bytes, sha256_file
 from mfo.storage.ingest import SourceImage, import_pages
 from mfo.storage.layout import DB_NAME, MANIFEST_NAME, SUBDIRS, ProjectLayout
@@ -43,6 +44,9 @@ __all__ = [
     "SourceImage",
     # preprocess
     "preprocess_pages",
+    # detect
+    "detect_regions",
+    "RegionCandidate",
     # project
     "ProjectStore",
 ]

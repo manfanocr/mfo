@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 from typer.testing import CliRunner
 
 from mfo.cli import app
-from mfo.core import Page
+from mfo.core import Page, Region
 from mfo.storage import ProjectStore
 
 runner = CliRunner()
@@ -16,6 +16,13 @@ runner = CliRunner()
 
 def _make_png(path: Path, size: tuple[int, int] = (3, 4)) -> None:
     Image.new("RGB", size, "white").save(path)
+
+
+def _make_page_with_text(path: Path) -> None:
+    """A white page with a solid black block the baseline detector will find."""
+    image = Image.new("RGB", (200, 300), "white")
+    ImageDraw.Draw(image).rectangle((20, 20, 80, 60), fill="black")
+    image.save(path)
 
 
 def test_version() -> None:
@@ -162,6 +169,50 @@ def test_preprocess_builds_derivatives_and_status_reports(tmp_path: Path) -> Non
 
     status = runner.invoke(app, ["status", str(target)])
     assert "preprocess" in status.stdout
+
+
+def test_detect_finds_regions_and_status_reports(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    source = tmp_path / "src"
+    source.mkdir()
+    _make_page_with_text(source / "p1.png")
+    runner.invoke(app, ["import", str(target), str(source)])
+
+    result = runner.invoke(app, ["detect", str(target)])
+    assert result.exit_code == 0, result.stdout
+    assert "Detected 1 region(s)" in result.stdout
+
+    with ProjectStore.open(target) as store:
+        regions = store.db.list(Region)
+        assert len(regions) == 1
+        assert store.db.list(Page)[0].detection.get("signature")
+
+    status = runner.invoke(app, ["status", str(target)])
+    assert "detect" in status.stdout
+    assert "1 regions" in status.stdout
+
+
+def test_detect_unknown_detector_exits_1(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    result = runner.invoke(app, ["detect", str(target), "--detector", "nope"])
+    assert result.exit_code == 1
+
+
+def test_run_includes_detect_stage(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    source = tmp_path / "src"
+    source.mkdir()
+    _make_page_with_text(source / "p1.png")
+    runner.invoke(app, ["import", str(target), str(source)])
+
+    result = runner.invoke(app, ["run", str(target)])
+    assert result.exit_code == 0, result.stdout
+    assert "detect" in result.stdout
+    with ProjectStore.open(target) as store:
+        assert len(store.db.list(Region)) == 1
 
 
 def test_config_file_provides_defaults(tmp_path: Path) -> None:
