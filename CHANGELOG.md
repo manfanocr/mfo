@@ -9,13 +9,22 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 0.1 — Repo scaffolding & tooling** (M0 Foundation):
+  - `pyproject.toml` with hatchling build backend, src layout, package `mfo`, dev extras
+    (pytest/ruff/mypy/pre-commit), and the `mfo` console script.
+  - Layered package skeleton `src/mfo/{core,vision,language,render,storage,cli,ui}` per spec §15,
+    with a `py.typed` marker and a placeholder CLI entry point (full CLI in batch 0.4).
+  - Tooling config: ruff (lint + format), mypy `--strict`, pytest; `.editorconfig`,
+    `.pre-commit-config.yaml`.
+  - GitHub Actions CI running lint, format-check, type-check, and tests on Python 3.11–3.13.
+  - `tests/test_smoke.py` verifying the package imports across all layers.
+  - Satisfies: NFR-28, NFR-29; spec §15.
 - Project documentation set: `README.md`, `PLAN.md` (milestone/batch roadmap), `CLAUDE.md`
   (agent guidance), `docs/ARCHITECTURE.md`, `docs/DATA_MODEL.md`, `CONTRIBUTING.md`, and this
   `CHANGELOG.md`. Derived from `mfo_design_notes_spec.md`.
 
 ### Notes
-- No code has landed yet. As batches complete (starting with **M0 — Foundation**), move their
-  entries here under a dated heading and tick them off in `PLAN.md`.
+- Next up: **batch 0.2 — Core data model** (entities from spec §11).
 
 <!--
 Template for a landed batch:

@@ -74,7 +74,7 @@ contributors don't re-litigate.
 Goal: a skeleton that compiles, tests, lints, and defines the contracts everything else
 plugs into.
 
-### Batch 0.1 — Repo scaffolding & tooling
+### Batch 0.1 — Repo scaffolding & tooling ✅ *(landed — see CHANGELOG)*
 - **Scope:** `pyproject.toml` (package `mfo`), `src/mfo/{core,vision,language,render,ui,storage,cli}`
   layout, ruff + mypy + pytest config, pre-commit, GitHub Actions CI (lint + test on 3.11–3.13),
   `.gitignore`, `.editorconfig`.
