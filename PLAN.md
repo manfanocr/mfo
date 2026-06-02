@@ -98,7 +98,7 @@ plugs into.
 - **DoD:** Create/open/save a project; survives simulated crash mid-write (atomic temp+rename);
   schema migration test.
 
-### Batch 0.4 — CLI skeleton & config
+### Batch 0.4 — CLI skeleton & config ✅ *(landed — see CHANGELOG)*
 - **Scope:** Typer app: `mfo init`, `mfo run`, `mfo status`, `mfo export`, `mfo review`
   (stubs). Config loading (file + CLI override, §FR-47), structured logging, project resolution.
 - **Satisfies:** FR-46, FR-47, NFR-12; §FR-45 headless groundwork.

@@ -9,6 +9,19 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 0.4 — CLI skeleton & config** (M0 Foundation):
+  - `mfo.cli`: a Typer app (`mfo`) with `init`, `status`, `run`, `export`, `review` commands and
+    a `--version`/`--log-level` callback. `init` creates a project (name defaults to the
+    directory) and refuses to overwrite an existing one; `status` reports per-stage progress
+    (import/detect/ocr/translate/render) inferred from stored data. `run`/`export`/`review`
+    open the project and print a placeholder until their milestones land.
+  - Layered config (`Settings`, `build_settings`): built-in defaults < TOML config file
+    (top-level or `[mfo]` table) < CLI options; unknown keys rejected (FR-47, NFR-12).
+  - Idempotent structured logging to stderr (`configure_logging`, `get_logger`).
+  - Tests: Typer `CliRunner` coverage of version/help, init (incl. config-file defaults and
+    CLI override), status stage reporting, missing-project errors, and the run stub. Adds
+    `typer` dependency.
+  - Satisfies: FR-46, FR-47, NFR-12; groundwork for FR-45.
 - **Batch 0.3 — Persistence layer** (M0 Foundation):
   - `mfo.storage`: project directory layout (`ProjectLayout`, spec §15), human-readable
     `manifest.json` reader/writer (`Manifest`), and a `ProjectStore` facade for
@@ -49,7 +62,7 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   `CHANGELOG.md`. Derived from `mfo_design_notes_spec.md`.
 
 ### Notes
-- Next up: **batch 0.4 — CLI skeleton & config** (`init`, `run`, `status`, `export`, `review`).
+- Next up: **batch 0.5 — Pipeline orchestrator** (stage interface, caching, resume) — completes M0.
 
 <!--
 Template for a landed batch:
