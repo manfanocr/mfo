@@ -76,6 +76,8 @@ class Page(MfoModel):
     structure: dict[str, Any] = Field(default_factory=dict)
     # Dialogue-grouping provenance (params + regions signature), for cache/skip (NFR-8).
     grouping: dict[str, Any] = Field(default_factory=dict)
+    # Translation provenance (translator id + target lang + units sig), for cache/skip (NFR-8).
+    translation: dict[str, Any] = Field(default_factory=dict)
 
 
 class Region(MfoModel):

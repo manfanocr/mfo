@@ -23,6 +23,7 @@ from mfo.storage.pipeline_state import JsonStateStore
 from mfo.storage.preprocess import preprocess_pages
 from mfo.storage.project import ProjectStore
 from mfo.storage.reading_order import assign_reading_order
+from mfo.storage.translate import Translated, translate_units
 
 __all__ = [
     # atomic
@@ -70,6 +71,9 @@ __all__ = [
     "assign_reading_order",
     # grouping
     "group_into_units",
+    # translate
+    "translate_units",
+    "Translated",
     # project
     "ProjectStore",
 ]

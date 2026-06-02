@@ -193,7 +193,7 @@ plugs into.
 
 ## M4 — Translation  (MVP-6, MVP-7)
 
-### Batch 4.1 — Translation adapter + context builder
+### Batch 4.1 — Translation adapter + context builder ✅ *(landed — see CHANGELOG)*
 - **Scope:** `Translator` adapter interface; context bundle (nearby regions, page, chapter);
   offline adapter (Argos Translate / NLLB via CTranslate2) as default; batch translation of
   linked units.

@@ -9,6 +9,44 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 4.1 — Translation adapter + context builder** (M4 Translation; first batch of M4):
+  - `mfo.language.translate`: a swappable `Translator` protocol (NFR-17) plus the default
+    `ArgosTranslator`, wrapping `Argos Translate` for **offline** neural MT (Tech decision §19), so the
+    core path needs no network at run time (NFR-23, I-7). Like manga-ocr, argostranslate is an
+    **optional** dependency (`pip install 'mfo[translate]'`) imported lazily, so importing the language
+    layer never pulls in the heavy MT stack. Each `TranslationRequest` carries its source text *and*
+    its context bundle; the offline engine translates line-by-line and ignores most of the bundle, but
+    the protocol passes it through for the AI adapters (M7, §12.5). A `get_translator` registry resolves
+    translators by config name.
+  - `mfo.core.context.build_context`: a pure, I/O-free builder that folds a unit's neighbouring source
+    texts (a configurable window of preceding/following dialogue in reading order) and a page/chapter
+    locator into the serializable `context_bundle` (FR-22, NFR-2) — the seam the offline translator and
+    later AI adapters read from. The project is modelled as a single volume, so the page index within
+    the page count is the chapter locator for now.
+  - `mfo.storage.translate.translate_units`: with the translation callable *injected* (so storage stays
+    provider-free, mirroring OCR/detect), it assembles each unit's `source_bundle` from its regions' OCR
+    spans in reading order — the text grouping deliberately left empty — builds each unit's
+    `context_bundle`, translates it, and stores the result as a `TranslationCandidate` on the unit
+    (separate from the OCR source, FR-15), establishing the source → OCR → translation link (I-2). Each
+    page records a translation signature folding the translator id, target language, and a fingerprint of
+    its units (ids, region links, source, context); a re-run skips unchanged pages (NFR-8) and a re-OCR
+    or re-grouping invalidates it. A recompute replaces only this stage's own machine (`RAW`) output: any
+    human/AI candidate, and a human selection pointing at one, is preserved — automation never silently
+    overwrites approved text (I-3). Adds a `Page.translation` field; no migration (it lives in the JSON
+    blob, and the `TranslationUnit` candidate fields already existed).
+  - `TranslateStage` (deps: group **and** ocr) is wired into the pipeline as **opt-in**: since it
+    consumes both the OCR text and the groups, it joins `mfo run` only once both OCR and a translator are
+    configured. New `mfo translate` command (`--translator`/`--force`) persists the choice, surfaces a
+    clear actionable error if the backend dependency is missing, and reports the unit count; `mfo status`
+    already surfaces translated units.
+  - Tests: pure context builder (two-sided neighbours, one-sided edges, widened window, empty-neighbour
+    drop, page locator, default window); storage source assembly in reading order, context neighbours,
+    candidate creation + provenance + reopen, idempotent skip, re-OCR invalidation, forced recompute
+    keeping a single machine candidate, human-candidate/selection preservation (I-3), unit-less page
+    skip; CLI config persistence + report, unknown-translator exit, pipeline inclusion once OCR is
+    configured, and missing-dependency exit. Adds the optional `mfo[translate]` extra and a mypy override
+    for the stub-less `argostranslate` module.
+  - Satisfies: FR-21, FR-22; MVP-6; I-2, I-3, I-7; NFR-2, NFR-8, NFR-17, NFR-23; spec §10.6, §12.5.
 - **Batch 3.2 — Dialogue grouping** (M3 Structure inference):
   - `mfo.core.grouping.group_regions`: a pure heuristic that partitions a page's (reading-ordered)
     regions into conversation chains. Walking regions in reading order, it chains a region onto the
@@ -252,12 +290,15 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 
 ### Notes
 - **Milestones M0 (Foundation), M1 (Import & Preprocessing), and M2 (Vision — Detection & OCR)
-  complete; M3 (Structure inference) started.** M2's MVP scope landed across 2.1 (detection), 2.3
-  (Japanese OCR), and 2.4 (confidence surfacing); the optional **batch 2.2 — ML detector adapter**
-  can be picked up any time, as it is not on the MVP-critical path. M3 began with 3.1 (reading
-  order) and 3.2 (dialogue grouping). Next up: **batch 3.3 — panel detection** (M3 Structure,
-  optional/light): best-effort panel boundaries to refine reading order, or cleanly disabled — after
-  which M3 is complete and **M4 — Translation** (batch 4.1, adapter + context builder) begins.
+  complete; M3 (Structure inference) MVP-complete; M4 (Translation) started.** M2's MVP scope landed
+  across 2.1 (detection), 2.3 (Japanese OCR), and 2.4 (confidence surfacing); the optional **batch 2.2
+  — ML detector adapter** can be picked up any time, as it is not on the MVP-critical path. M3 landed
+  3.1 (reading order) and 3.2 (dialogue grouping), satisfying MVP-5; the optional **batch 3.3 — panel
+  detection** (best-effort panel boundaries to refine reading order, or cleanly disabled) remains and
+  is off the MVP-critical path. M4 began with 4.1 (translation adapter + context builder). Next up:
+  **batch 4.2 — Glossary, terminology & style** (glossary injection, name/honorific/terminology
+  consistency, and literal/balanced/natural/localized style options), then 4.3 (traceability & mapping
+  export).
 
 <!--
 Template for a landed batch:

@@ -11,7 +11,7 @@ from typer.testing import CliRunner
 
 from mfo.cli import app
 from mfo.cli.stages import build_pipeline
-from mfo.core import Page, Region, TranslationUnit
+from mfo.core import OCRSpan, Page, Region, TranslationUnit
 from mfo.core.enums import RegionStatus
 from mfo.core.geometry import BBox
 from mfo.storage import ProjectStore
@@ -19,6 +19,7 @@ from mfo.storage import ProjectStore
 runner = CliRunner()
 
 _MANGA_OCR_INSTALLED = importlib.util.find_spec("manga_ocr") is not None
+_ARGOS_INSTALLED = importlib.util.find_spec("argostranslate") is not None
 
 
 def _make_png(path: Path, size: tuple[int, int] = (3, 4)) -> None:
@@ -352,6 +353,58 @@ def test_ocr_missing_dependency_exits_1(tmp_path: Path) -> None:
     runner.invoke(app, ["detect", str(target)])
 
     result = runner.invoke(app, ["ocr", str(target)])
+    assert result.exit_code == 1
+    assert "pip install" in result.output
+
+
+def test_translate_persists_config_and_reports_units(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+
+    # No units yet → 0 translated and no translator backend is loaded (no dependency needed).
+    result = runner.invoke(app, ["translate", str(target)])
+    assert result.exit_code == 0, result.stdout
+    assert "Translated 0 unit(s)" in result.stdout
+    with ProjectStore.open(target) as store:
+        assert store.project.config["translate"]["translator"] == "argos"
+
+
+def test_translate_unknown_translator_exits_1(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    result = runner.invoke(app, ["translate", str(target), "--translator", "nope"])
+    assert result.exit_code == 1
+
+
+def test_run_includes_translate_stage_once_ocr_configured(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    source = tmp_path / "src"
+    source.mkdir()
+    _make_page_with_text(source / "p1.png")
+    runner.invoke(app, ["import", str(target), str(source)])
+    runner.invoke(app, ["ocr", str(target)])  # translation depends on OCR being configured
+    runner.invoke(app, ["translate", str(target)])
+
+    with ProjectStore.open(target) as store:
+        names = build_pipeline(store).stage_names()
+        assert "ocr" in names
+        assert "translate" in names
+
+
+@pytest.mark.skipif(_ARGOS_INSTALLED, reason="argostranslate is installed; can't test its absence")
+def test_translate_missing_dependency_exits_1(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    with ProjectStore.open(target) as store:
+        page = Page(project_id=store.project.id, index=0, image_path="p0.png", width=10, height=10)
+        store.db.save(page)
+        region = Region(page_id=page.id, bbox=BBox(x=0, y=0, width=5, height=5))
+        store.db.save(region)
+        store.db.save(OCRSpan(region_id=region.id, text="こんにちは"))
+        store.db.save(TranslationUnit(page_id=page.id, ordered_region_ids=[region.id]))
+
+    result = runner.invoke(app, ["translate", str(target)])
     assert result.exit_code == 1
     assert "pip install" in result.output
 

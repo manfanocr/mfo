@@ -21,6 +21,7 @@ from pathlib import Path
 from mfo.core.enums import ReadingDirection
 from mfo.core.grouping import DEFAULT_GAP_RATIO
 from mfo.core.pipeline import Pipeline, Stage
+from mfo.language import TranslationRequest, Translator, get_translator
 from mfo.storage import (
     ProjectStore,
     assign_reading_order,
@@ -29,6 +30,7 @@ from mfo.storage import (
     import_pages,
     ocr_regions,
     preprocess_pages,
+    translate_units,
 )
 from mfo.vision import (
     OCREngine,
@@ -49,6 +51,7 @@ DETECT_STAGE = "detect"
 STRUCTURE_STAGE = "structure"
 GROUP_STAGE = "group"
 OCR_STAGE = "ocr"
+TRANSLATE_STAGE = "translate"
 
 
 class ImportStage:
@@ -179,6 +182,39 @@ class OcrStage:
         )
 
 
+class TranslateStage:
+    """Translate grouped units with context, storing candidates (idempotent; needs OCR + groups)."""
+
+    name = TRANSLATE_STAGE
+    deps: tuple[str, ...] = (GROUP_STAGE, OCR_STAGE)
+
+    def __init__(self, translator: Translator, *, source_lang: str, target_lang: str) -> None:
+        self._translator = translator
+        self._source_lang = source_lang
+        self._target_lang = target_lang
+
+    def _signature(self) -> str:
+        return f"{self._translator.name}@{self._translator.version}"
+
+    def inputs_hash(self, ctx: ProjectStore) -> str:
+        return f"translate@1|{self._signature()}|{self._source_lang}->{self._target_lang}"
+
+    def run(self, ctx: ProjectStore) -> None:
+        translate_units(
+            ctx,
+            translate=lambda source, context: self._translator.translate(
+                TranslationRequest(
+                    source=source,
+                    source_lang=self._source_lang,
+                    target_lang=self._target_lang,
+                    context=context,
+                )
+            ),
+            signature=self._signature(),
+            target_lang=self._target_lang,
+        )
+
+
 def save_import_config(
     store: ProjectStore,
     *,
@@ -236,6 +272,13 @@ def save_ocr_config(store: ProjectStore, engine: str) -> None:
     store.set_project(store.project.model_copy(update={"config": project_config}))
 
 
+def save_translate_config(store: ProjectStore, translator: str) -> None:
+    """Persist the chosen translator so ``mfo run`` uses the same one (NFR-17, FR-48)."""
+    project_config = dict(store.project.config)
+    project_config["translate"] = {"translator": translator}
+    store.set_project(store.project.model_copy(update={"config": project_config}))
+
+
 def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
     """Assemble the pipeline from the project's persisted configuration.
 
@@ -244,7 +287,9 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
     config if present, otherwise their zero-dependency defaults — structure and grouping are
     geometry-only so they stay on the offline path. OCR is opt-in: its default engine (manga-ocr) is
     an optional install, so the OCR stage joins the pipeline only once an engine has been chosen via
-    ``mfo ocr``. Later milestones register translate → render here.
+    ``mfo ocr``. Translation (consuming both the OCR text and the groups) is likewise opt-in via
+    ``mfo translate`` and only joins once OCR is configured, since it depends on it. Later
+    milestones register render here.
     """
     stages: list[Stage[ProjectStore]] = []
     config = store.project.config
@@ -276,5 +321,16 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
         ocr_config = config.get("ocr")
         if ocr_config is not None:
             stages.append(OcrStage(get_ocr_engine(ocr_config.get("engine", "manga-ocr"))))
+
+            # Translation depends on OCR, so it only joins once OCR is configured too.
+            translate_config = config.get("translate")
+            if translate_config is not None:
+                stages.append(
+                    TranslateStage(
+                        get_translator(translate_config.get("translator", "argos")),
+                        source_lang=store.project.source_lang,
+                        target_lang=store.project.target_lang,
+                    )
+                )
 
     return Pipeline(stages)

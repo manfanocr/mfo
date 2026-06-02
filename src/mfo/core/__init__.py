@@ -7,6 +7,7 @@ from mfo.core.confidence import (
     aggregate_confidence,
     is_low_confidence,
 )
+from mfo.core.context import DEFAULT_NEIGHBOR_WINDOW, build_context
 from mfo.core.enums import (
     CandidateKind,
     EditAction,
@@ -45,6 +46,9 @@ __all__ = [
     "DEFAULT_THRESHOLD",
     "aggregate_confidence",
     "is_low_confidence",
+    # context
+    "DEFAULT_NEIGHBOR_WINDOW",
+    "build_context",
     # reading order
     "order_regions",
     # grouping

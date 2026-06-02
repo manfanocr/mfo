@@ -2,9 +2,9 @@
 
 Commands are deliberately thin: they resolve configuration and a project, then delegate to the
 core/storage/vision layers. ``init``, ``import``, ``preprocess``, ``detect``, ``order``, ``group``,
-``ocr``, ``flag``, ``status``, and ``run`` (the pipeline orchestrator) are functional; ``export``
-and ``review`` are wired to a real project but their processing bodies arrive in later milestones
-(batches 5.3, 6.2).
+``ocr``, ``translate``, ``flag``, ``status``, and ``run`` (the pipeline orchestrator) are
+functional; ``export`` and ``review`` are wired to a real project but their processing bodies
+arrive in later milestones (batches 5.3, 6.2).
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from mfo.cli.stages import (
     save_ocr_config,
     save_preprocess_config,
     save_structure_config,
+    save_translate_config,
 )
 from mfo.core import (
     DEFAULT_THRESHOLD,
@@ -37,6 +38,11 @@ from mfo.core import (
     TranslationUnit,
 )
 from mfo.core.grouping import DEFAULT_GAP_RATIO
+from mfo.language import (
+    TranslationRequest,
+    TranslatorDependencyError,
+    get_translator,
+)
 from mfo.storage import (
     JsonStateStore,
     ProjectStore,
@@ -48,6 +54,7 @@ from mfo.storage import (
     import_pages,
     ocr_regions,
     preprocess_pages,
+    translate_units,
 )
 from mfo.vision import (
     OcrDependencyError,
@@ -279,6 +286,46 @@ def ocr(
             typer.secho(str(exc), fg=typer.colors.RED, err=True)
             raise typer.Exit(code=1) from None
     typer.secho(f"Recognized {len(spans)} region(s).", fg=typer.colors.GREEN)
+
+
+@app.command()
+def translate(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+    translator: Annotated[str, typer.Option("--translator", help="Translator to use.")] = "argos",
+    force: Annotated[
+        bool, typer.Option("--force", help="Re-translate even if a current result is cached.")
+    ] = False,
+) -> None:
+    """Translate grouped units with context, offline (Argos default; install via mfo[translate])."""
+    try:
+        engine = get_translator(translator)
+    except ValueError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from None
+    signature = f"{engine.name}@{engine.version}"
+    with _open_store(path) as store:
+        save_translate_config(store, translator)
+        source_lang = store.project.source_lang
+        target_lang = store.project.target_lang
+        try:
+            units = translate_units(
+                store,
+                translate=lambda source, context: engine.translate(
+                    TranslationRequest(
+                        source=source,
+                        source_lang=source_lang,
+                        target_lang=target_lang,
+                        context=context,
+                    )
+                ),
+                signature=signature,
+                target_lang=target_lang,
+                force=force,
+            )
+        except TranslatorDependencyError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from None
+    typer.secho(f"Translated {len(units)} unit(s).", fg=typer.colors.GREEN)
 
 
 @app.command()
