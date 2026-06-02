@@ -9,6 +9,18 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 0.2 — Core data model** (M0 Foundation):
+  - `mfo.core` entities (Pydantic v2): `Project, Page, Region, OCRSpan, TranslationCandidate,
+    TranslationUnit, EditRecord, RenderArtifact`, plus geometry primitives (`BBox`, `Point`) and
+    enums (region type/status, reading direction, translation style, candidate kind, edit action).
+    Models forbid unknown fields and round-trip losslessly to/from JSON.
+  - Dependency-free ULID identifier scheme (`mfo.core.ids`) with self-describing per-entity
+    prefixes (e.g. `rgn_…`, `tu_…`) that are unique and time-sortable.
+  - Integrity check: a `TranslationUnit`'s `selected_candidate_id` must reference one of its
+    candidates.
+  - Tests: ID format/uniqueness/sortability and Hypothesis property-based lossless round-trip
+    for models. Adds `pydantic` (runtime) and `hypothesis` (dev) dependencies.
+  - Satisfies: I-2, FR-41, NFR-30; spec §11.
 - **Batch 0.1 — Repo scaffolding & tooling** (M0 Foundation):
   - `pyproject.toml` with hatchling build backend, src layout, package `mfo`, dev extras
     (pytest/ruff/mypy/pre-commit), and the `mfo` console script.
@@ -24,7 +36,7 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   `CHANGELOG.md`. Derived from `mfo_design_notes_spec.md`.
 
 ### Notes
-- Next up: **batch 0.2 — Core data model** (entities from spec §11).
+- Next up: **batch 0.3 — Persistence layer** (project directory, manifest, SQLite, atomic writes).
 
 <!--
 Template for a landed batch:

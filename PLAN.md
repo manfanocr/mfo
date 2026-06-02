@@ -82,7 +82,7 @@ plugs into.
 - **DoD:** `pip install -e ".[dev]"`, `ruff check`, `mypy src`, `pytest` all pass on an empty
   test. CI green.
 
-### Batch 0.2 — Core data model
+### Batch 0.2 — Core data model ✅ *(landed — see CHANGELOG)*
 - **Scope:** Dataclasses/Pydantic models for `Project, Page, Region, OCRSpan, TranslationUnit,
   EditRecord, RenderArtifact` (§11). Stable ID scheme (ULID/UUID). Enums for region type,
   reading direction, region status. JSON (de)serialization round-trips.
