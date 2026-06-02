@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mfo.core import (
+    GlossaryEntry,
     OCRSpan,
     Page,
     Project,
@@ -13,7 +14,7 @@ from mfo.core import (
     TranslationCandidate,
     TranslationUnit,
 )
-from mfo.core.enums import CandidateKind
+from mfo.core.enums import CandidateKind, TranslationStyle
 from mfo.core.geometry import BBox
 from mfo.storage import ProjectStore, translate_units
 
@@ -205,3 +206,106 @@ def test_page_without_units_is_skipped(tmp_path: Path) -> None:
     with _store(tmp_path / "proj") as store:
         _page(store)
         assert translate_units(store, translate=_echo, signature="fake@1", target_lang="en") == []
+
+
+def test_glossary_enforced_on_machine_output(tmp_path: Path) -> None:
+    # The machine renders the name as an alias; the glossary normalizes it to canonical (FR-23).
+    def render(source: str, context: dict[str, object]) -> _Result:
+        return _Result(text="Tarou runs")
+
+    glossary = (GlossaryEntry(source="太郎", target="Taro", aliases=("Tarou",)),)
+    with _store(tmp_path / "proj") as store:
+        page = _page(store)
+        region = _region(store, page, order=0, text="太郎")
+        _unit(store, page, [region])
+
+        units = translate_units(
+            store, translate=render, signature="fake@1", target_lang="en", glossary=glossary
+        )
+        selected = next(c for c in units[0].candidates if c.id == units[0].selected_candidate_id)
+        assert selected.text == "Taro runs"
+
+
+def test_glossary_injected_into_context(tmp_path: Path) -> None:
+    # Applicable terms ride along in the unit's context bundle for context-aware adapters (FR-24).
+    seen: dict[str, dict[str, object]] = {}
+
+    def capture(source: str, context: dict[str, object]) -> _Result:
+        seen[source] = context
+        return _Result(text=source)
+
+    glossary = (GlossaryEntry(source="太郎", target="Taro"),)
+    with _store(tmp_path / "proj") as store:
+        page = _page(store)
+        region = _region(store, page, order=0, text="太郎")
+        _unit(store, page, [region])
+
+        units = translate_units(
+            store, translate=capture, signature="fake@1", target_lang="en", glossary=glossary
+        )
+        assert seen["太郎"]["glossary"] == [{"source": "太郎", "target": "Taro"}]
+        assert units[0].context_bundle["glossary"] == [{"source": "太郎", "target": "Taro"}]
+
+
+def test_style_threaded_to_translator_and_recorded(tmp_path: Path) -> None:
+    def render(source: str, context: dict[str, object]) -> _Result:
+        return _Result(text=source)
+
+    with _store(tmp_path / "proj") as store:
+        page = _page(store)
+        region = _region(store, page, order=0, text="hello")
+        _unit(store, page, [region])
+
+        units = translate_units(
+            store,
+            translate=render,
+            signature="fake@1",
+            target_lang="en",
+            style=TranslationStyle.NATURAL,
+        )
+        assert units[0].style is TranslationStyle.NATURAL
+        saved_page = store.db.get(Page, page.id)
+        assert saved_page is not None
+        assert saved_page.translation["style"] == "natural"
+
+
+def test_style_change_invalidates_cache(tmp_path: Path) -> None:
+    with _store(tmp_path / "proj") as store:
+        page = _page(store)
+        region = _region(store, page, order=0, text="hello")
+        _unit(store, page, [region])
+
+        first = translate_units(
+            store,
+            translate=_echo,
+            signature="fake@1",
+            target_lang="en",
+            style=TranslationStyle.LITERAL,
+        )
+        rerun = translate_units(
+            store,
+            translate=_echo,
+            signature="fake@1",
+            target_lang="en",
+            style=TranslationStyle.NATURAL,
+        )
+        assert len(first) == 1
+        assert len(rerun) == 1  # a different style is a different request → recomputed
+
+
+def test_glossary_change_invalidates_cache(tmp_path: Path) -> None:
+    with _store(tmp_path / "proj") as store:
+        page = _page(store)
+        region = _region(store, page, order=0, text="太郎")
+        _unit(store, page, [region])
+
+        first = translate_units(store, translate=_echo, signature="fake@1", target_lang="en")
+        rerun = translate_units(
+            store,
+            translate=_echo,
+            signature="fake@1",
+            target_lang="en",
+            glossary=(GlossaryEntry(source="太郎", target="Taro"),),
+        )
+        assert len(first) == 1
+        assert len(rerun) == 1  # injecting the glossary changed the context → recomputed

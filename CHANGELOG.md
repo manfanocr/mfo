@@ -9,6 +9,32 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 4.2 — Glossary, terminology & style** (M4 Translation):
+  - `mfo.core.glossary`: a pure, I/O-free module for terminology consistency. A frozen, serializable
+    `GlossaryEntry` pins a source term to a canonical target plus the variant spellings (`aliases`) a
+    machine tends to emit. `applicable_entries` finds the entries whose source term occurs in a unit's
+    source text; `glossary_terms` renders them for context injection; `apply_glossary` deterministically
+    rewrites known aliases to the canonical target in a translation (longest alias first), which is how
+    name/term consistency is actually guaranteed on the offline path (FR-23). `entries_from_config` /
+    `entries_to_config` round-trip the glossary through `Project.config`.
+  - Translation now applies the glossary **two ways** (`mfo.storage.translate.translate_units`): the
+    terms applicable to each unit are *injected* into its `context_bundle` under `glossary` so a
+    context-aware adapter (M7) can honour them (FR-24, §12.5), and the glossary is *enforced* on the
+    machine output deterministically (FR-23). The requested **style** (FR-25) is threaded into each
+    `TranslationRequest` (the offline engine can't restyle, but the AI adapters will use it) and recorded
+    on the unit (`TranslationUnit.style`). The per-page translation signature now folds the style and the
+    injected glossary (via the context), so a glossary edit or style change invalidates the cache and
+    re-translates (NFR-8); human/AI candidates and selections are still preserved across recompute (I-3).
+  - `TranslationRequest` gains a `style` field (defaulting to `balanced`). `TranslateStage` carries the
+    style + glossary, folding both into its `inputs_hash` (bumped to `translate@2`); `build_pipeline`
+    rebuilds them from `Project.config`. New `mfo translate --style`; a new `mfo glossary` command group
+    (`add` / `list` / `remove`) edits the project glossary, which `mfo translate` and `mfo run` then apply.
+  - Tests: core glossary (applicability, alias→canonical normalization, cross-variant consistency,
+    inert when term absent, idempotent on canonical, longest-alias-wins, injection payload, config
+    round-trip, empty config); storage glossary enforcement on output, injection into the context
+    bundle, style threaded to the translator + recorded, and style/glossary cache invalidation; CLI
+    style persistence and `glossary add/list/remove` (incl. replace-by-source and unknown-remove exit).
+  - Satisfies: FR-23, FR-24, FR-25; SG-2/3/4 groundwork; I-3; NFR-8, NFR-17; spec §10.6, §12.5.
 - **Batch 4.1 — Translation adapter + context builder** (M4 Translation; first batch of M4):
   - `mfo.language.translate`: a swappable `Translator` protocol (NFR-17) plus the default
     `ArgosTranslator`, wrapping `Argos Translate` for **offline** neural MT (Tech decision §19), so the
@@ -295,10 +321,10 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   — ML detector adapter** can be picked up any time, as it is not on the MVP-critical path. M3 landed
   3.1 (reading order) and 3.2 (dialogue grouping), satisfying MVP-5; the optional **batch 3.3 — panel
   detection** (best-effort panel boundaries to refine reading order, or cleanly disabled) remains and
-  is off the MVP-critical path. M4 began with 4.1 (translation adapter + context builder). Next up:
-  **batch 4.2 — Glossary, terminology & style** (glossary injection, name/honorific/terminology
-  consistency, and literal/balanced/natural/localized style options), then 4.3 (traceability & mapping
-  export).
+  is off the MVP-critical path. M4 landed 4.1 (translation adapter + context builder) and 4.2 (glossary,
+  terminology & style). Next up: **batch 4.3 — Traceability & mapping export** (selected translation per
+  unit, full source→OCR→translation link graph, JSON mapping export via `mfo export --mapping`, and
+  `EditRecord` scaffolding; MVP-7), then the optional 4.4 (API translation adapter).
 
 <!--
 Template for a landed batch:

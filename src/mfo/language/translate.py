@@ -19,15 +19,20 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from mfo.core.enums import TranslationStyle
+
 
 @dataclass(frozen=True)
 class TranslationRequest:
-    """One unit to translate, with its language pair and context bundle (FR-22, §12.5)."""
+    """One unit to translate, with its language pair, context bundle, and style (FR-22, FR-25)."""
 
     source: str
     source_lang: str
     target_lang: str
     context: dict[str, Any] = field(default_factory=dict)
+    # Requested register (FR-25). The offline engine can't restyle; context-aware adapters (M7) use
+    # it. Glossary terms applicable to this unit ride along in ``context["glossary"]`` (FR-24).
+    style: TranslationStyle = TranslationStyle.BALANCED
 
 
 @dataclass(frozen=True)

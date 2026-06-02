@@ -376,6 +376,58 @@ def test_translate_unknown_translator_exits_1(tmp_path: Path) -> None:
     assert result.exit_code == 1
 
 
+def test_translate_persists_style(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    result = runner.invoke(app, ["translate", str(target), "--style", "natural"])
+    assert result.exit_code == 0, result.stdout
+    assert "natural" in result.stdout
+    with ProjectStore.open(target) as store:
+        assert store.project.config["translate"]["style"] == "natural"
+
+
+def test_glossary_add_list_remove(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+
+    add = runner.invoke(app, ["glossary", "add", str(target), "太郎", "Taro", "--alias", "Tarou"])
+    assert add.exit_code == 0, add.stdout
+
+    listed = runner.invoke(app, ["glossary", "list", str(target)])
+    assert listed.exit_code == 0
+    assert "太郎 -> Taro" in listed.stdout
+    assert "Tarou" in listed.stdout
+
+    with ProjectStore.open(target) as store:
+        entries = store.project.config["glossary"]
+        assert entries == [
+            {"source": "太郎", "target": "Taro", "aliases": ["Tarou"], "notes": None}
+        ]
+
+    removed = runner.invoke(app, ["glossary", "remove", str(target), "太郎"])
+    assert removed.exit_code == 0
+    empty = runner.invoke(app, ["glossary", "list", str(target)])
+    assert "No glossary entries" in empty.stdout
+
+
+def test_glossary_remove_unknown_exits_1(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    result = runner.invoke(app, ["glossary", "remove", str(target), "nope"])
+    assert result.exit_code == 1
+
+
+def test_glossary_add_replaces_same_source(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    runner.invoke(app, ["glossary", "add", str(target), "鬼", "ogre"])
+    runner.invoke(app, ["glossary", "add", str(target), "鬼", "oni"])
+    with ProjectStore.open(target) as store:
+        entries = store.project.config["glossary"]
+        assert len(entries) == 1
+        assert entries[0]["target"] == "oni"
+
+
 def test_run_includes_translate_stage_once_ocr_configured(tmp_path: Path) -> None:
     target = tmp_path / "vol"
     runner.invoke(app, ["init", str(target)])

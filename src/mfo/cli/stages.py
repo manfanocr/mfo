@@ -16,9 +16,11 @@ work already done (pages already copied, derivatives already cached).
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
-from mfo.core.enums import ReadingDirection
+from mfo.core.enums import ReadingDirection, TranslationStyle
+from mfo.core.glossary import GlossaryEntry, entries_from_config, entries_to_config
 from mfo.core.grouping import DEFAULT_GAP_RATIO
 from mfo.core.pipeline import Pipeline, Stage
 from mfo.language import TranslationRequest, Translator, get_translator
@@ -183,21 +185,38 @@ class OcrStage:
 
 
 class TranslateStage:
-    """Translate grouped units with context, storing candidates (idempotent; needs OCR + groups)."""
+    """Translate grouped units with context/glossary/style, storing candidates (idempotent)."""
 
     name = TRANSLATE_STAGE
     deps: tuple[str, ...] = (GROUP_STAGE, OCR_STAGE)
 
-    def __init__(self, translator: Translator, *, source_lang: str, target_lang: str) -> None:
+    def __init__(
+        self,
+        translator: Translator,
+        *,
+        source_lang: str,
+        target_lang: str,
+        style: TranslationStyle = TranslationStyle.BALANCED,
+        glossary: tuple[GlossaryEntry, ...] = (),
+    ) -> None:
         self._translator = translator
         self._source_lang = source_lang
         self._target_lang = target_lang
+        self._style = style
+        self._glossary = glossary
 
     def _signature(self) -> str:
         return f"{self._translator.name}@{self._translator.version}"
 
+    def _glossary_signature(self) -> str:
+        payload = json.dumps(entries_to_config(self._glossary), sort_keys=True, ensure_ascii=False)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
     def inputs_hash(self, ctx: ProjectStore) -> str:
-        return f"translate@1|{self._signature()}|{self._source_lang}->{self._target_lang}"
+        return (
+            f"translate@2|{self._signature()}|{self._source_lang}->{self._target_lang}"
+            f"|{self._style.value}|{self._glossary_signature()}"
+        )
 
     def run(self, ctx: ProjectStore) -> None:
         translate_units(
@@ -208,10 +227,13 @@ class TranslateStage:
                     source_lang=self._source_lang,
                     target_lang=self._target_lang,
                     context=context,
+                    style=self._style,
                 )
             ),
             signature=self._signature(),
             target_lang=self._target_lang,
+            style=self._style,
+            glossary=self._glossary,
         )
 
 
@@ -272,10 +294,24 @@ def save_ocr_config(store: ProjectStore, engine: str) -> None:
     store.set_project(store.project.model_copy(update={"config": project_config}))
 
 
-def save_translate_config(store: ProjectStore, translator: str) -> None:
-    """Persist the chosen translator so ``mfo run`` uses the same one (NFR-17, FR-48)."""
+def save_translate_config(
+    store: ProjectStore, translator: str, *, style: TranslationStyle = TranslationStyle.BALANCED
+) -> None:
+    """Persist the translator and style so ``mfo run`` reproduces them (NFR-17, FR-25, FR-48)."""
     project_config = dict(store.project.config)
-    project_config["translate"] = {"translator": translator}
+    project_config["translate"] = {"translator": translator, "style": style.value}
+    store.set_project(store.project.model_copy(update={"config": project_config}))
+
+
+def load_glossary(store: ProjectStore) -> tuple[GlossaryEntry, ...]:
+    """Read the project glossary from its persisted config (FR-24)."""
+    return entries_from_config(store.project.config.get("glossary"))
+
+
+def save_glossary(store: ProjectStore, entries: tuple[GlossaryEntry, ...]) -> None:
+    """Persist the project glossary so translation and ``mfo run`` enforce it (FR-24, FR-48)."""
+    project_config = dict(store.project.config)
+    project_config["glossary"] = entries_to_config(entries)
     store.set_project(store.project.model_copy(update={"config": project_config}))
 
 
@@ -325,11 +361,16 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
             # Translation depends on OCR, so it only joins once OCR is configured too.
             translate_config = config.get("translate")
             if translate_config is not None:
+                style = TranslationStyle(
+                    translate_config.get("style", TranslationStyle.BALANCED.value)
+                )
                 stages.append(
                     TranslateStage(
                         get_translator(translate_config.get("translator", "argos")),
                         source_lang=store.project.source_lang,
                         target_lang=store.project.target_lang,
+                        style=style,
+                        glossary=entries_from_config(config.get("glossary")),
                     )
                 )
 

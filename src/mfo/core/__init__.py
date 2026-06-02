@@ -17,6 +17,14 @@ from mfo.core.enums import (
     TranslationStyle,
 )
 from mfo.core.geometry import BBox, Point
+from mfo.core.glossary import (
+    GlossaryEntry,
+    applicable_entries,
+    apply_glossary,
+    entries_from_config,
+    entries_to_config,
+    glossary_terms,
+)
 from mfo.core.grouping import group_regions
 from mfo.core.ids import new_id, new_ulid
 from mfo.core.models import (
@@ -51,6 +59,13 @@ __all__ = [
     "build_context",
     # reading order
     "order_regions",
+    # glossary
+    "GlossaryEntry",
+    "apply_glossary",
+    "applicable_entries",
+    "entries_from_config",
+    "entries_to_config",
+    "glossary_terms",
     # grouping
     "group_regions",
     # ids

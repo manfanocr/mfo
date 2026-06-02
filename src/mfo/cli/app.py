@@ -2,9 +2,9 @@
 
 Commands are deliberately thin: they resolve configuration and a project, then delegate to the
 core/storage/vision layers. ``init``, ``import``, ``preprocess``, ``detect``, ``order``, ``group``,
-``ocr``, ``translate``, ``flag``, ``status``, and ``run`` (the pipeline orchestrator) are
-functional; ``export`` and ``review`` are wired to a real project but their processing bodies
-arrive in later milestones (batches 5.3, 6.2).
+``ocr``, ``translate``, ``glossary`` (add/list/remove), ``flag``, ``status``, and ``run`` (the
+pipeline orchestrator) are functional; ``export`` and ``review`` are wired to a real project but
+their processing bodies arrive in later milestones (batches 5.3, 6.2).
 """
 
 from __future__ import annotations
@@ -19,7 +19,9 @@ from mfo.cli.config import build_settings
 from mfo.cli.logging import configure_logging, get_logger
 from mfo.cli.stages import (
     build_pipeline,
+    load_glossary,
     save_detect_config,
+    save_glossary,
     save_group_config,
     save_import_config,
     save_ocr_config,
@@ -29,12 +31,14 @@ from mfo.cli.stages import (
 )
 from mfo.core import (
     DEFAULT_THRESHOLD,
+    GlossaryEntry,
     OCRSpan,
     Page,
     Project,
     ReadingDirection,
     Region,
     RenderArtifact,
+    TranslationStyle,
     TranslationUnit,
 )
 from mfo.core.grouping import DEFAULT_GAP_RATIO
@@ -292,11 +296,14 @@ def ocr(
 def translate(
     path: Annotated[Path, typer.Argument(help="Project directory.")],
     translator: Annotated[str, typer.Option("--translator", help="Translator to use.")] = "argos",
+    style: Annotated[
+        TranslationStyle, typer.Option("--style", help="Translation register (FR-25).")
+    ] = TranslationStyle.BALANCED,
     force: Annotated[
         bool, typer.Option("--force", help="Re-translate even if a current result is cached.")
     ] = False,
 ) -> None:
-    """Translate grouped units with context, offline (Argos default; install via mfo[translate])."""
+    """Translate units with context/glossary/style, offline (Argos default — mfo[translate])."""
     try:
         engine = get_translator(translator)
     except ValueError as exc:
@@ -304,9 +311,10 @@ def translate(
         raise typer.Exit(code=1) from None
     signature = f"{engine.name}@{engine.version}"
     with _open_store(path) as store:
-        save_translate_config(store, translator)
+        save_translate_config(store, translator, style=style)
         source_lang = store.project.source_lang
         target_lang = store.project.target_lang
+        glossary = load_glossary(store)
         try:
             units = translate_units(
                 store,
@@ -316,16 +324,80 @@ def translate(
                         source_lang=source_lang,
                         target_lang=target_lang,
                         context=context,
+                        style=style,
                     )
                 ),
                 signature=signature,
                 target_lang=target_lang,
+                style=style,
+                glossary=glossary,
                 force=force,
             )
         except TranslatorDependencyError as exc:
             typer.secho(str(exc), fg=typer.colors.RED, err=True)
             raise typer.Exit(code=1) from None
-    typer.secho(f"Translated {len(units)} unit(s).", fg=typer.colors.GREEN)
+    typer.secho(f"Translated {len(units)} unit(s) ({style.value}).", fg=typer.colors.GREEN)
+
+
+glossary_app = typer.Typer(
+    no_args_is_help=True,
+    help="Manage the project glossary (pinned source→target terms; FR-23, FR-24).",
+)
+app.add_typer(glossary_app, name="glossary")
+
+
+@glossary_app.command("add")
+def glossary_add(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+    source: Annotated[str, typer.Argument(help="Source-language term to pin.")],
+    target: Annotated[str, typer.Argument(help="Canonical target rendering.")],
+    alias: Annotated[
+        list[str] | None,
+        typer.Option("--alias", help="Variant target spelling to normalize (repeatable)."),
+    ] = None,
+    note: Annotated[str | None, typer.Option("--note", help="Optional human note.")] = None,
+) -> None:
+    """Add or replace a glossary entry (matched by source term)."""
+    entry = GlossaryEntry(source=source, target=target, aliases=tuple(alias or ()), notes=note)
+    with _open_store(path) as store:
+        existing = [e for e in load_glossary(store) if e.source != source]
+        save_glossary(store, (*existing, entry))
+    typer.secho(f"Glossary: {source!r} -> {target!r}", fg=typer.colors.GREEN)
+
+
+@glossary_app.command("list")
+def glossary_list(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+) -> None:
+    """List the project glossary entries."""
+    with _open_store(path) as store:
+        entries = load_glossary(store)
+    if not entries:
+        typer.echo("No glossary entries.")
+        return
+    for entry in entries:
+        line = f"  {entry.source} -> {entry.target}"
+        if entry.aliases:
+            line += f"  (aliases: {', '.join(entry.aliases)})"
+        if entry.notes:
+            line += f"  # {entry.notes}"
+        typer.echo(line)
+
+
+@glossary_app.command("remove")
+def glossary_remove(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+    source: Annotated[str, typer.Argument(help="Source term of the entry to remove.")],
+) -> None:
+    """Remove a glossary entry by its source term."""
+    with _open_store(path) as store:
+        entries = load_glossary(store)
+        remaining = tuple(e for e in entries if e.source != source)
+        if len(remaining) == len(entries):
+            typer.secho(f"No glossary entry for {source!r}.", fg=typer.colors.YELLOW, err=True)
+            raise typer.Exit(code=1) from None
+        save_glossary(store, remaining)
+    typer.secho(f"Removed {source!r}.", fg=typer.colors.GREEN)
 
 
 @app.command()

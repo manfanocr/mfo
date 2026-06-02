@@ -200,7 +200,7 @@ plugs into.
 - **Satisfies:** FR-21, FR-22, NFR-2, NFR-17, NFR-23; MVP-6; §10.6, §12.5.
 - **DoD:** Translates units with context offline; results stored as candidates per unit.
 
-### Batch 4.2 — Glossary, terminology & style
+### Batch 4.2 — Glossary, terminology & style ✅ *(landed — see CHANGELOG)*
 - **Scope:** Glossary injection, name/honorific/terminology consistency, style options
   (literal/balanced/natural/localized).
 - **Satisfies:** FR-23, FR-24, FR-25; SG-2/3/4 groundwork; §12.5.

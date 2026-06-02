@@ -1,17 +1,20 @@
-"""Persist context-aware translations per unit (spec §10.6, §12.5; FR-21, FR-22; I-2, I-3, NFR-8).
+"""Persist context-aware translations per unit (spec §10.6, §12.5; FR-21/22/23/24/25; I-2/3; NFR-8).
 
 The translation callable is *injected* (the language layer supplies it) so storage stays free of any
 provider dependency, mirroring the OCR/detect stages. For each page this assembles every unit's
 ``source_bundle`` from its regions' OCR spans in reading order — the text grouping deliberately left
 empty — builds each unit's ``context_bundle`` from its neighbours and page locator
-(:func:`mfo.core.context.build_context`), translates it, and stores the result as a
-``TranslationCandidate`` on the unit (kept separate from the OCR source, FR-15).
+(:func:`mfo.core.context.build_context`), injects the glossary terms applicable to that unit into
+the bundle (FR-24, §12.5), translates it under the requested style (FR-25), enforces glossary term
+consistency on the result (FR-23), and stores it as a ``TranslationCandidate`` on the unit (kept
+separate from the OCR source, FR-15).
 
-Each page records a translation signature folding the translator id, the target language, and a
-fingerprint of its units (ids, region links, source text, context). Re-running skips unchanged pages
-(NFR-8); a re-OCR or re-grouping changes the fingerprint and invalidates it. A recompute only
-replaces this stage's own machine output: any human (or AI) candidate, and a human selection that
-points at one, is preserved — automation never silently overwrites approved text (I-3).
+Each page records a translation signature folding the translator id, target language, style, and a
+fingerprint of its units (ids, region links, source text, and context — which carries the injected
+glossary). Re-running skips unchanged pages (NFR-8); a re-OCR, re-grouping, glossary edit, or style
+change invalidates it. A recompute only replaces this stage's own machine output: any human (or AI)
+candidate, and a human selection that points at one, is preserved — automation never silently
+overwrites approved text (I-3).
 """
 
 from __future__ import annotations
@@ -19,12 +22,18 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, Protocol
 
 from mfo.core import OCRSpan, Page, Region, TranslationCandidate, TranslationUnit
 from mfo.core.context import DEFAULT_NEIGHBOR_WINDOW, build_context
-from mfo.core.enums import CandidateKind
+from mfo.core.enums import CandidateKind, TranslationStyle
+from mfo.core.glossary import (
+    GlossaryEntry,
+    applicable_entries,
+    apply_glossary,
+    glossary_terms,
+)
 from mfo.storage.hashing import content_key
 from mfo.storage.project import ProjectStore
 
@@ -58,6 +67,16 @@ def _assemble_source(unit: TranslationUnit, text_by_region: dict[str, str]) -> s
     return _SOURCE_JOIN.join(parts)
 
 
+def _with_glossary(
+    context: dict[str, Any], source: str, glossary: Sequence[GlossaryEntry]
+) -> dict[str, Any]:
+    """Inject the glossary terms applicable to this unit's source into its context (FR-24)."""
+    terms = glossary_terms(applicable_entries(source, glossary))
+    if terms:
+        context = {**context, "glossary": terms}
+    return context
+
+
 def _units_fingerprint(
     units: list[TranslationUnit],
     sources: list[str],
@@ -78,13 +97,14 @@ def _apply_translation(
     unit: TranslationUnit,
     source: str,
     context: dict[str, Any],
-    result: Translated,
+    *,
+    text: str,
+    confidence: float | None,
+    style: TranslationStyle,
 ) -> TranslationUnit:
     """Attach a fresh machine candidate, preserving any human/AI candidate and selection (I-3)."""
     preserved = [c for c in unit.candidates if c.kind is not CandidateKind.RAW]
-    raw = TranslationCandidate(
-        text=result.text, kind=CandidateKind.RAW, confidence=result.confidence
-    )
+    raw = TranslationCandidate(text=text, kind=CandidateKind.RAW, confidence=confidence)
     preserved_ids = {c.id for c in preserved}
     # Keep a human selection if it points at a preserved candidate; else select the new machine one.
     selected = unit.selected_candidate_id if unit.selected_candidate_id in preserved_ids else raw.id
@@ -94,6 +114,7 @@ def _apply_translation(
             "context_bundle": context,
             "candidates": [*preserved, raw],
             "selected_candidate_id": selected,
+            "style": style,  # the requested register, recorded on the unit (FR-25)
         }
     )
 
@@ -104,10 +125,12 @@ def translate_units(
     translate: Translate,
     signature: str,
     target_lang: str,
+    style: TranslationStyle = TranslationStyle.BALANCED,
+    glossary: Sequence[GlossaryEntry] = (),
     window: int = DEFAULT_NEIGHBOR_WINDOW,
     force: bool = False,
 ) -> list[TranslationUnit]:
-    """Translate every page's units with context; returns the units (re)translated."""
+    """Translate every page's units with context/glossary/style; returns those (re)translated."""
     updated: list[TranslationUnit] = []
     pages = store.db.list(Page, order_by="idx")
     page_count = len(pages)
@@ -134,23 +157,36 @@ def translate_units(
         units = sorted(units, key=lambda u: _order_key(u, order_by_region))
         sources = [_assemble_source(unit, text_by_region) for unit in units]
         contexts = [
-            build_context(
-                sources, index, page_index=page.index, page_count=page_count, window=window
+            _with_glossary(
+                build_context(
+                    sources, index, page_index=page.index, page_count=page_count, window=window
+                ),
+                sources[index],
+                glossary,
             )
             for index in range(len(units))
         ]
 
         page_signature = content_key(
-            f"translate|{signature}|{target_lang}|{window}",
+            f"translate|{signature}|{target_lang}|{style.value}|{window}",
             _units_fingerprint(units, sources, contexts),
         )
         if not force and page.translation.get("signature") == page_signature:
             continue
 
-        new_units = [
-            _apply_translation(unit, source, context, translate(source, context))
-            for unit, source, context in zip(units, sources, contexts, strict=True)
-        ]
+        new_units: list[TranslationUnit] = []
+        for unit, source, context in zip(units, sources, contexts, strict=True):
+            result = translate(source, context)
+            new_units.append(
+                _apply_translation(
+                    unit,
+                    source,
+                    context,
+                    text=apply_glossary(result.text, source, glossary),
+                    confidence=result.confidence,
+                    style=style,
+                )
+            )
         store.db.save_all(new_units)
         store.db.save(
             page.model_copy(
@@ -159,6 +195,7 @@ def translate_units(
                         "signature": page_signature,
                         "translator": signature,
                         "target_lang": target_lang,
+                        "style": style.value,
                         "count": len(new_units),
                     }
                 }
