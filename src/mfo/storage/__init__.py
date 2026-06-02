@@ -4,6 +4,13 @@ from __future__ import annotations
 
 from mfo.storage.atomic import atomic_write_bytes, atomic_write_text
 from mfo.storage.cache import Cache
+from mfo.storage.confidence import (
+    ConfidenceReport,
+    confidence_report,
+    flag_low_confidence,
+    low_confidence_regions,
+    region_confidences,
+)
 from mfo.storage.db import SCHEMA_VERSION, Database
 from mfo.storage.detect import RegionCandidate, detect_regions
 from mfo.storage.hashing import content_key, sha256_bytes, sha256_file
@@ -25,6 +32,12 @@ __all__ = [
     "sha256_file",
     # cache
     "Cache",
+    # confidence
+    "ConfidenceReport",
+    "confidence_report",
+    "flag_low_confidence",
+    "low_confidence_regions",
+    "region_confidences",
     # layout
     "ProjectLayout",
     "MANIFEST_NAME",

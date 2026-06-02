@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from mfo.core.confidence import (
+    DEFAULT_THRESHOLD,
+    aggregate_confidence,
+    is_low_confidence,
+)
 from mfo.core.enums import (
     CandidateKind,
     EditAction,
@@ -34,6 +39,10 @@ from mfo.core.pipeline import (
 )
 
 __all__ = [
+    # confidence
+    "DEFAULT_THRESHOLD",
+    "aggregate_confidence",
+    "is_low_confidence",
     # ids
     "new_id",
     "new_ulid",

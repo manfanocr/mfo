@@ -12,6 +12,8 @@ from typer.testing import CliRunner
 from mfo.cli import app
 from mfo.cli.stages import build_pipeline
 from mfo.core import Page, Region
+from mfo.core.enums import RegionStatus
+from mfo.core.geometry import BBox
 from mfo.storage import ProjectStore
 
 runner = CliRunner()
@@ -259,6 +261,57 @@ def test_ocr_missing_dependency_exits_1(tmp_path: Path) -> None:
     result = runner.invoke(app, ["ocr", str(target)])
     assert result.exit_code == 1
     assert "pip install" in result.output
+
+
+def _save_region(store: ProjectStore, confidence: float | None) -> Region:
+    region = Region(page_id="pg_x", bbox=BBox(x=0, y=0, width=1, height=1), confidence=confidence)
+    store.db.save(region)
+    return region
+
+
+def test_status_reports_low_confidence(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    with ProjectStore.open(target) as store:
+        _save_region(store, 0.9)
+        _save_region(store, 0.2)
+
+    result = runner.invoke(app, ["status", str(target)])
+    assert result.exit_code == 0, result.stdout
+    assert "Confidence:" in result.stdout
+    assert "low-confidence: 1/2" in result.stdout
+
+
+def test_flag_marks_low_confidence_regions(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    with ProjectStore.open(target) as store:
+        high = _save_region(store, 0.9)
+        low = _save_region(store, 0.2)
+
+    result = runner.invoke(app, ["flag", str(target)])
+    assert result.exit_code == 0, result.stdout
+    assert "Flagged 1 region(s)" in result.stdout
+
+    with ProjectStore.open(target) as store:
+        flagged_region = store.db.get(Region, low.id)
+        high_region = store.db.get(Region, high.id)
+        assert flagged_region is not None and flagged_region.status is RegionStatus.NEEDS_REVIEW
+        assert high_region is not None and high_region.status is RegionStatus.AUTO
+
+    status = runner.invoke(app, ["status", str(target)])
+    assert "flagged for review: 1" in status.stdout
+
+
+def test_flag_threshold_option(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    with ProjectStore.open(target) as store:
+        _save_region(store, 0.6)
+
+    # A higher threshold pulls the 0.6 region into the low-confidence set.
+    result = runner.invoke(app, ["flag", str(target), "--threshold", "0.7"])
+    assert "Flagged 1 region(s)" in result.stdout
 
 
 def test_config_file_provides_defaults(tmp_path: Path) -> None:

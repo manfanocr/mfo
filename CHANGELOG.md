@@ -9,6 +9,24 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 2.4 — Confidence surfacing** (M2 Vision — Detection & OCR; completes M2's MVP scope):
+  - `mfo.core.confidence`: pure aggregation that combines a region's detection and OCR confidence
+    into one conservative score — the *weakest* signal (`min` of known values), so a confidently
+    detected but poorly-read region still surfaces. Unknown confidence (manga-ocr reports none)
+    is ignored in the aggregate but treated as low downstream, keeping genuine uncertainty visible
+    rather than hidden (I-4). `is_low_confidence` compares against a tunable threshold (default 0.5).
+  - `mfo.storage.confidence`: applies that logic across a project — `region_confidences` /
+    `low_confidence_regions` make the review set **queryable** (MVP-11), `confidence_report`
+    summarizes totals/scored/low/flagged for reporting, and `flag_low_confidence` persists the
+    verdict by marking low-confidence regions `NEEDS_REVIEW`. It only touches `AUTO` regions, so a
+    human's status decision is never overwritten (I-3), and is idempotent.
+  - `mfo status` now prints a Confidence section (low-confidence count vs. total at the threshold,
+    plus how many are flagged), with a `--threshold` option (NFR-4). New `mfo flag` command persists
+    the review flags for the downstream editor, also `--threshold`-tunable.
+  - Tests: core aggregation (weakest-signal, unknown handling, threshold/None semantics); storage
+    querying, OCR-confidence pulling a region below threshold, report counts, AUTO-only flagging
+    (I-3) and idempotency; CLI status reporting, `flag` persistence + threshold.
+  - Satisfies: I-4, FR-12, NFR-4; MVP-11; spec §10.3/§10.4.
 - **Batch 2.3 — OCR adapter + Japanese (manga-ocr)** (M2 Vision — Detection & OCR):
   - `mfo.vision.ocr`: a swappable `OCREngine` protocol (NFR-17) plus the default `MangaOcrEngine`,
     wrapping `manga-ocr` for offline Japanese recognition incl. vertical text. manga-ocr is an
@@ -180,11 +198,12 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   `CHANGELOG.md`. Derived from `mfo_design_notes_spec.md`.
 
 ### Notes
-- **Milestones M0 (Foundation) and M1 (Import & Preprocessing) complete; M2 (Vision) in progress.**
-  Detection baseline (2.1) and Japanese OCR (2.3) have landed. Next up: **batch 2.4 — confidence
-  surfacing**: aggregate region/OCR confidence, report low-confidence counts in `mfo status`, and
-  store flags for downstream highlighting (the optional **batch 2.2 — ML detector adapter** can be
-  picked up any time, as it is not on the MVP-critical path).
+- **Milestones M0 (Foundation), M1 (Import & Preprocessing), and M2 (Vision — Detection & OCR)
+  complete.** M2's MVP scope landed across 2.1 (detection), 2.3 (Japanese OCR), and 2.4
+  (confidence surfacing); the optional **batch 2.2 — ML detector adapter** can be picked up any
+  time, as it is not on the MVP-critical path. Next up: **batch 3.1 — reading order** (M3
+  Structure): a manga reading-order heuristic (RTL/LTR/TTB, column-aware) assigning each region a
+  `reading_order_index`, with a manual-override hook for the review editor.
 
 <!--
 Template for a landed batch:

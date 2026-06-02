@@ -162,7 +162,7 @@ plugs into.
 - **DoD:** OCRs detected regions on JP sample; confidence + (when available) alternates stored;
   vertical text handled.
 
-### Batch 2.4 — Confidence surfacing
+### Batch 2.4 — Confidence surfacing ✅ *(landed — see CHANGELOG)*
 - **Scope:** Aggregate region/OCR confidence; `mfo status` shows low-confidence counts; flag
   store for downstream highlighting.
 - **Satisfies:** I-4, FR-12, NFR-4; MVP-11.
@@ -302,7 +302,7 @@ plugs into.
 
 - [x] M0 Foundation
 - [x] M1 Import & Preprocess
-- [ ] M2 Vision
+- [x] M2 Vision *(MVP scope: 2.1 detect, 2.3 OCR, 2.4 confidence; 2.2 ML detector is optional)*
 - [ ] M3 Structure
 - [ ] M4 Translation
 - [ ] M5 Render & Export

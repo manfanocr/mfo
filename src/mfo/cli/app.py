@@ -1,9 +1,9 @@
 """The ``mfo`` command-line application (spec FR-46, FR-47).
 
 Commands are deliberately thin: they resolve configuration and a project, then delegate to the
-core/storage/vision layers. ``init``, ``import``, ``preprocess``, ``detect``, ``ocr``, ``status``,
-and ``run`` (the pipeline orchestrator) are functional; ``export`` and ``review`` are wired to a
-real project but their processing bodies arrive in later milestones (batches 5.3, 6.2).
+core/storage/vision layers. ``init``, ``import``, ``preprocess``, ``detect``, ``ocr``, ``flag``,
+``status``, and ``run`` (the pipeline orchestrator) are functional; ``export`` and ``review`` are
+wired to a real project but their processing bodies arrive in later milestones (batches 5.3, 6.2).
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from mfo.cli.stages import (
     save_preprocess_config,
 )
 from mfo.core import (
+    DEFAULT_THRESHOLD,
     OCRSpan,
     Page,
     Project,
@@ -35,7 +36,9 @@ from mfo.core import (
 from mfo.storage import (
     JsonStateStore,
     ProjectStore,
+    confidence_report,
     detect_regions,
+    flag_low_confidence,
     import_pages,
     ocr_regions,
     preprocess_pages,
@@ -281,8 +284,11 @@ def _stage_line(label: str, count: int, unit: str) -> str:
 @app.command()
 def status(
     path: Annotated[Path, typer.Argument(help="Project directory.")],
+    threshold: Annotated[
+        float, typer.Option("--threshold", help="Confidence below which a region is low.")
+    ] = DEFAULT_THRESHOLD,
 ) -> None:
-    """Show project info and per-stage progress."""
+    """Show project info, per-stage progress, and where confidence is low (I-4)."""
     with _open_store(path) as store:
         project = store.project
         pages = store.db.list(Page)
@@ -292,6 +298,7 @@ def status(
         units = store.db.list(TranslationUnit)
         translated = sum(1 for unit in units if unit.selected_candidate_id is not None)
         renders = store.db.list(RenderArtifact)
+        report = confidence_report(store, threshold=threshold)
 
     typer.secho(f"{project.name}  ({project.id})", bold=True)
     typer.echo(f"  languages: {project.source_lang} -> {project.target_lang}")
@@ -304,6 +311,30 @@ def status(
     typer.echo(_stage_line("ocr", len(ocr_spans), "spans"))
     typer.echo(_stage_line("translate", translated, "units"))
     typer.echo(_stage_line("render", len(renders), "pages"))
+
+    if report.total:
+        typer.echo("")
+        typer.echo("Confidence:")
+        color = typer.colors.YELLOW if report.low else typer.colors.GREEN
+        typer.secho(
+            f"  low-confidence: {report.low}/{report.total} region(s) "
+            f"(threshold {report.threshold:.2f})",
+            fg=color,
+        )
+        typer.echo(f"  flagged for review: {report.flagged}")
+
+
+@app.command()
+def flag(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+    threshold: Annotated[
+        float, typer.Option("--threshold", help="Confidence below which a region is flagged.")
+    ] = DEFAULT_THRESHOLD,
+) -> None:
+    """Mark low-confidence regions for review (only automatic ones — user edits win, I-3)."""
+    with _open_store(path) as store:
+        flagged = flag_low_confidence(store, threshold=threshold)
+    typer.secho(f"Flagged {len(flagged)} region(s) for review.", fg=typer.colors.GREEN)
 
 
 def _not_yet(feature: str, batch: str) -> None:
