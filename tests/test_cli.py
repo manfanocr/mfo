@@ -74,12 +74,35 @@ def test_status_missing_project_exits_1(tmp_path: Path) -> None:
     assert result.exit_code == 1
 
 
-def test_run_on_valid_project_with_empty_pipeline(tmp_path: Path) -> None:
+def test_run_without_import_config_is_a_noop(tmp_path: Path) -> None:
     target = tmp_path / "vol"
     runner.invoke(app, ["init", str(target)])
     result = runner.invoke(app, ["run", str(target)])
     assert result.exit_code == 0
-    assert "No pipeline stages" in result.stdout
+    assert "Nothing to run yet" in result.stdout
+
+
+def test_run_executes_import_and_preprocess_end_to_end(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    source = tmp_path / "src"
+    source.mkdir()
+    _make_png(source / "p1.png")
+    _make_png(source / "p2.png")
+    # `import`/`preprocess` record their config; `run` rebuilds the pipeline from it.
+    runner.invoke(app, ["import", str(target), str(source)])
+    runner.invoke(app, ["preprocess", str(target), "--max-dim", "2"])
+
+    result = runner.invoke(app, ["run", str(target)])
+    assert result.exit_code == 0, result.stdout
+    assert "import" in result.stdout
+    assert "preprocess" in result.stdout
+    assert "Pipeline complete." in result.stdout
+
+    # A second run skips both stages (inputs unchanged → resumable/cacheable).
+    again = runner.invoke(app, ["run", str(target)])
+    assert "[skip] import" in again.stdout
+    assert "[skip] preprocess" in again.stdout
 
 
 def test_import_creates_pages_and_status_reports_them(tmp_path: Path) -> None:

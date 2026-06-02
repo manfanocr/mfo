@@ -9,6 +9,24 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 1.3 — Resume & project save (consolidation)** (M1 Import & Preprocessing — completes M1):
+  - `mfo.cli.stages`: the first concrete pipeline stages — `ImportStage` and `PreprocessStage` —
+    wired into the orchestrator from batch 0.5. Each runs through the same idempotent storage/vision
+    functions the standalone commands use, so `mfo run` now executes the full `import → preprocess`
+    flow (preprocess depends on import). The stages live at the CLI composition root, the one layer
+    permitted to depend on both `vision` and `storage`.
+  - Project save/reopen for replay (FR-48): `mfo import`/`mfo preprocess` persist their inputs (the
+    import source + ordering, the preprocess knobs) into `Project.config`, and `mfo import` records
+    the source *before* copying, so a reopened project can rebuild the pipeline and resume. `mfo run`
+    assembles the pipeline from that saved config; with no source configured it prints a clear hint.
+  - Resume mid-import (FR-5, MVP-10): an import interrupted before its completion record is written
+    has no record and re-runs, and `import_pages` skips pages already copied — completed pages are not
+    redone. Effective input hashing folds the source listing in, so adding a page re-imports and
+    re-preprocesses; an unchanged project is a clean no-op (both stages skip).
+  - Tests: CLI end-to-end `run` (import + preprocess, then skip-on-rerun), interrupted-import resume
+    (partial pages completed without re-copying the originals, verified by mtime), and added-page
+    invalidation. Replaces the empty-pipeline stub test.
+  - Satisfies: FR-5, FR-48, MVP-10; NFR-7, NFR-8, NFR-10, NFR-11; I-1, I-5; spec §10.
 - **Batch 1.2 — Preprocessing** (M1 Import & Preprocessing):
   - `mfo.vision.preprocess`: pure, storage-free page preprocessing — color-space normalization
     (RGB or `--grayscale`), optional downscale for analysis (`--max-dim`, recording the `scale`
@@ -115,8 +133,9 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   `CHANGELOG.md`. Derived from `mfo_design_notes_spec.md`.
 
 ### Notes
-- **Milestone M0 (Foundation) complete.** M1 in progress; next up: **batch 1.3 — Resume & project
-  save (consolidation)**: end-to-end `init → import → preprocess`, save/reopen, resume mid-import.
+- **Milestones M0 (Foundation) and M1 (Import & Preprocessing) complete.** Next up: **M2 — Vision**,
+  starting with **batch 2.1 — Region detection adapter + baseline**: an adapter interface plus a
+  dependency-light OpenCV baseline detector that works with no model download.
 
 <!--
 Template for a landed batch:

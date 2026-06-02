@@ -16,6 +16,11 @@ import typer
 from mfo import __version__
 from mfo.cli.config import build_settings
 from mfo.cli.logging import configure_logging, get_logger
+from mfo.cli.stages import (
+    build_pipeline,
+    save_import_config,
+    save_preprocess_config,
+)
 from mfo.core import (
     OCRSpan,
     Page,
@@ -25,7 +30,6 @@ from mfo.core import (
     RenderArtifact,
     TranslationUnit,
 )
-from mfo.core.pipeline import Pipeline, Stage
 from mfo.storage import JsonStateStore, ProjectStore, import_pages, preprocess_pages
 from mfo.vision import PageOrder, PreprocessConfig, discover_images, preprocess_file
 
@@ -143,11 +147,12 @@ def import_(
         order = PageOrder.MANIFEST
 
     with _open_store(path) as store:
-        try:
-            scan = discover_images(source, order=order, manifest_order=manifest_order)
-        except NotADirectoryError:
+        if not source.is_dir():
             typer.secho(f"Not a directory: {source}", fg=typer.colors.RED, err=True)
             raise typer.Exit(code=1) from None
+        # Record the source first so an interrupted import can still be resumed by `mfo run`.
+        save_import_config(store, source=source, order=order, manifest_order=manifest_order)
+        scan = discover_images(source, order=order, manifest_order=manifest_order)
         pages = import_pages(store, scan.images)
 
     for skip in scan.skipped:
@@ -180,6 +185,7 @@ def preprocess(
         grayscale=grayscale, max_dimension=max_dimension, denoise=denoise, deskew=deskew
     )
     with _open_store(path) as store:
+        save_preprocess_config(store, config)
         pages = preprocess_pages(
             store,
             transform=lambda image_path: preprocess_file(image_path, config),
@@ -230,16 +236,6 @@ def _not_yet(feature: str, batch: str) -> None:
     )
 
 
-def _build_pipeline() -> Pipeline[ProjectStore]:
-    """Assemble the processing pipeline.
-
-    Stages (import → preprocess → detect → ocr → structure → translate → render) are
-    registered as their milestones land; until then the pipeline is empty but fully wired.
-    """
-    stages: list[Stage[ProjectStore]] = []
-    return Pipeline(stages)
-
-
 @app.command()
 def run(
     path: Annotated[Path, typer.Argument(help="Project directory.")],
@@ -258,10 +254,10 @@ def run(
 ) -> None:
     """Run the processing pipeline."""
     with _open_store(path) as store:
-        pipeline = _build_pipeline()
+        pipeline = build_pipeline(store)
         if not pipeline.stage_names():
             typer.secho(
-                "No pipeline stages are implemented yet (they land from milestone M1 onward).",
+                "Nothing to run yet — import a source first with:  mfo import <project> <source>",
                 fg=typer.colors.YELLOW,
             )
             return

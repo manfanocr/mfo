@@ -132,7 +132,7 @@ plugs into.
 - **DoD:** Preprocessed derivatives written to cache; originals untouched (hash check);
   metadata persisted.
 
-### Batch 1.3 — Resume & project save (consolidation)
+### Batch 1.3 — Resume & project save (consolidation) ✅ *(landed — see CHANGELOG)*
 - **Scope:** End-to-end `init → import → preprocess`, save/reopen, resume mid-import.
 - **Satisfies:** FR-5, FR-48, MVP-10; NFR-10/11.
 - **DoD:** Kill during import, reopen, `mfo run` resumes without redoing completed pages.
@@ -301,7 +301,7 @@ plugs into.
 ## Tracking
 
 - [x] M0 Foundation
-- [ ] M1 Import & Preprocess
+- [x] M1 Import & Preprocess
 - [ ] M2 Vision
 - [ ] M3 Structure
 - [ ] M4 Translation
