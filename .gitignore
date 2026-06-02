@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Models (downloaded on demand)
+models/
+
+# mfo project working data (don't commit user volumes / derived data)
+*.db
+exports/
+renders/
+cache/
+logs/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
