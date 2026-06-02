@@ -9,6 +9,23 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 1.1 — Directory import & page ordering** (M1 Import & Preprocessing):
+  - `mfo.vision.images`: a Pillow-backed image adapter (`read_image_size`, `SUPPORTED_SUFFIXES`
+    for PNG/JPG/JPEG/WEBP/TIFF) that raises a clear `ImageError` on unreadable files (NFR-17).
+  - `mfo.vision.ingest`: pure, storage-free directory discovery (`discover_images` → `ImportScan`)
+    with three ordering strategies (`PageOrder`: natural/numeric `1,2,10`, plain name, and explicit
+    manifest order). Malformed images and manifest entries with no matching file are collected as
+    skips instead of aborting the import (NFR-9).
+  - `mfo.storage.ingest.import_pages`: copies discovered originals into the project's `pages/`
+    directory (never moving or modifying source — I-1, FR-3, FR-4) and persists a `Page` per image
+    with captured dimensions and a continuing index. Idempotent, so an interrupted import resumes
+    without duplicating pages (FR-5).
+  - `mfo import <project> <source>` CLI command (`--order`, `--manifest`) wiring discovery →
+    import, reporting imported and skipped counts; `mfo status` now shows imported pages.
+  - Tests: natural vs. name vs. manifest ordering (incl. `1,2,10`), unsupported-file filtering,
+    corrupt-image skip, dimension capture, non-destructive copy, idempotent/resumable import, and
+    CLI end-to-end. Adds the `pillow` dependency.
+  - Satisfies: FR-1, FR-2, FR-3, FR-4, NFR-9, NFR-17; MVP-1, MVP-2; spec §10.1.
 - **Batch 0.5 — Pipeline orchestrator** (M0 Foundation — completes M0):
   - `mfo.core.pipeline`: a dependency-resolved `Pipeline` of `Stage`s. Each stage declares its
     `deps` and a pure `inputs_hash(ctx)`; the orchestrator folds a stage's hash with its
@@ -81,8 +98,8 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   `CHANGELOG.md`. Derived from `mfo_design_notes_spec.md`.
 
 ### Notes
-- **Milestone M0 (Foundation) complete.** Next up: **M1 — Import & Preprocessing**, starting with
-  batch 1.1 (directory import & page ordering).
+- **Milestone M0 (Foundation) complete.** M1 in progress; next up: **batch 1.2 — Preprocessing**
+  (color normalization, optional downscale/deskew/denoise, orientation; originals untouched).
 
 <!--
 Template for a landed batch:

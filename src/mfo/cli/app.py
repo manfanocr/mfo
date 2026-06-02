@@ -1,8 +1,9 @@
 """The ``mfo`` command-line application (spec FR-46, FR-47).
 
 Commands are deliberately thin: they resolve configuration and a project, then delegate to the
-core/storage layers. ``run``, ``export``, and ``review`` are wired to a real project but their
-processing bodies arrive in later milestones (batches 0.5, 5.3, 6.2).
+core/storage/vision layers. ``init``, ``import``, ``status``, and ``run`` (the pipeline
+orchestrator) are functional; ``export`` and ``review`` are wired to a real project but their
+processing bodies arrive in later milestones (batches 5.3, 6.2).
 """
 
 from __future__ import annotations
@@ -25,7 +26,8 @@ from mfo.core import (
     TranslationUnit,
 )
 from mfo.core.pipeline import Pipeline, Stage
-from mfo.storage import JsonStateStore, ProjectStore
+from mfo.storage import JsonStateStore, ProjectStore, import_pages
+from mfo.vision import PageOrder, discover_images
 
 app = typer.Typer(
     add_completion=False,
@@ -110,6 +112,49 @@ def init(
     typer.echo(f"  path:      {path.resolve()}")
     typer.echo(f"  languages: {project.source_lang} -> {project.target_lang}")
     typer.echo(f"  direction: {project.reading_direction}")
+
+
+def _read_manifest_order(path: Path) -> list[str]:
+    """Read an ordering manifest: one filename per line; blanks and ``#`` comments ignored."""
+    names: list[str] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if line and not line.startswith("#"):
+            names.append(line)
+    return names
+
+
+@app.command(name="import")
+def import_(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+    source: Annotated[Path, typer.Argument(help="Directory of source page images.")],
+    order: Annotated[PageOrder, typer.Option(help="Page ordering strategy.")] = PageOrder.NATURAL,
+    manifest: Annotated[
+        Path | None,
+        typer.Option(
+            "--manifest",
+            help="Ordering manifest (one filename per line); implies --order manifest.",
+        ),
+    ] = None,
+) -> None:
+    """Import a folder of page images into the project (originals are copied, never modified)."""
+    manifest_order = _read_manifest_order(manifest) if manifest is not None else None
+    if manifest_order is not None:
+        order = PageOrder.MANIFEST
+
+    with _open_store(path) as store:
+        try:
+            scan = discover_images(source, order=order, manifest_order=manifest_order)
+        except NotADirectoryError:
+            typer.secho(f"Not a directory: {source}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from None
+        pages = import_pages(store, scan.images)
+
+    for skip in scan.skipped:
+        typer.secho(f"  skipped {skip.source_path.name}: {skip.reason}", fg=typer.colors.YELLOW)
+    typer.secho(f"Imported {len(pages)} page(s).", fg=typer.colors.GREEN)
+    if scan.skipped:
+        typer.echo(f"  {len(scan.skipped)} file(s) skipped.")
 
 
 def _stage_line(label: str, count: int, unit: str) -> str:

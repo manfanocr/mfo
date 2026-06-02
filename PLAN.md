@@ -116,7 +116,7 @@ plugs into.
 
 ## M1 — Import & Preprocessing  (MVP-1, MVP-2, MVP-10)
 
-### Batch 1.1 — Directory import & page ordering
+### Batch 1.1 — Directory import & page ordering ✅ *(landed — see CHANGELOG)*
 - **Scope:** Scan dir for PNG/JPG/WEBP/TIFF, build `Page` entries, ordering strategies
   (filename, natural/numeric sort, manifest override), dimension/metadata capture, graceful
   handling of malformed images.

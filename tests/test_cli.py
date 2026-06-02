@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PIL import Image
 from typer.testing import CliRunner
 
 from mfo.cli import app
@@ -11,6 +12,10 @@ from mfo.core import Page
 from mfo.storage import ProjectStore
 
 runner = CliRunner()
+
+
+def _make_png(path: Path, size: tuple[int, int] = (3, 4)) -> None:
+    Image.new("RGB", size, "white").save(path)
 
 
 def test_version() -> None:
@@ -75,6 +80,46 @@ def test_run_on_valid_project_with_empty_pipeline(tmp_path: Path) -> None:
     result = runner.invoke(app, ["run", str(target)])
     assert result.exit_code == 0
     assert "No pipeline stages" in result.stdout
+
+
+def test_import_creates_pages_and_status_reports_them(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    source = tmp_path / "src"
+    source.mkdir()
+    _make_png(source / "p1.png")
+    _make_png(source / "p2.png")
+
+    result = runner.invoke(app, ["import", str(target), str(source)])
+    assert result.exit_code == 0, result.stdout
+    assert "Imported 2 page(s)" in result.stdout
+
+    with ProjectStore.open(target) as store:
+        assert len(store.db.list(Page)) == 2
+
+    status = runner.invoke(app, ["status", str(target)])
+    assert "2 pages" in status.stdout
+
+
+def test_import_skips_corrupt_image(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    source = tmp_path / "src"
+    source.mkdir()
+    _make_png(source / "good.png")
+    (source / "bad.png").write_bytes(b"not a png")
+
+    result = runner.invoke(app, ["import", str(target), str(source)])
+    assert result.exit_code == 0, result.stdout
+    assert "Imported 1 page(s)" in result.stdout
+    assert "skipped bad.png" in result.stdout
+
+
+def test_import_missing_source_exits_1(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    result = runner.invoke(app, ["import", str(target), str(tmp_path / "nope")])
+    assert result.exit_code == 1
 
 
 def test_config_file_provides_defaults(tmp_path: Path) -> None:
