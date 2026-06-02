@@ -9,6 +9,32 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 3.1 — Reading order** (M3 Structure inference; first batch of M3):
+  - `mfo.core.reading_order.order_regions`: a pure, tier-aware manga reading-order heuristic. Regions
+    are grouped into horizontal tiers by vertical overlap, tiers are read top-to-bottom, and each tier
+    is swept along the reading direction — right-to-left for RTL, left-to-right for LTR (FR-16, FR-17).
+    This orders the common multi-panel grid correctly where a naive raster scan would not; tall panels
+    spanning tiers are a known hard case deferred to panel detection (batch 3.3). The function is the
+    seam the review editor (M6) reuses and that manual correction (FR-20) overrides; it does not mutate
+    its inputs.
+  - `mfo.storage.reading_order.assign_reading_order`: assigns each region a `reading_order_index` per
+    page. Reading order is pure geometry, so — unlike OCR — it needs no imaging dependency and runs on
+    the fully offline core path. The index is updated in place so region IDs stay stable (I-2). Each
+    page records a structure signature folding the direction and an (order-independent) regions
+    fingerprint; re-running skips unchanged pages (NFR-8), and a re-detection invalidates it. A
+    **manual reordering survives a plain re-run** — the signature is unchanged so the page is skipped,
+    and automation never silently overwrites it (FR-20, I-3) — and is only re-derived on `--force`.
+    Adds a `Page.structure` field.
+  - `StructureStage` (deps: detect) is wired into the pipeline and, being geometry-only, is **always
+    on** (no optional install), unlike OCR. Its direction defaults to the project's reading direction.
+    New `mfo order` command (`--direction`/`--force`) persists the choice and reports the count;
+    `mfo status` gains an `order` stage line.
+  - Tests: core heuristic (RTL/LTR grid ordering, default direction, misaligned-top tier grouping,
+    non-mutation); storage index assignment + provenance + reopen, idempotent skip, direction-change
+    recompute, stable IDs, re-detection invalidation, manual-order-survives-rerun/force-overrides,
+    region-less page skip; CLI `order` assignment + status line, direction config persistence, and
+    `run` including the structure stage.
+  - Satisfies: FR-16, FR-17, FR-20 (data hook); MVP-5; I-2, I-3; NFR-8; spec §10.5.
 - **Batch 2.4 — Confidence surfacing** (M2 Vision — Detection & OCR; completes M2's MVP scope):
   - `mfo.core.confidence`: pure aggregation that combines a region's detection and OCR confidence
     into one conservative score — the *weakest* signal (`min` of known values), so a confidently
@@ -199,11 +225,11 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 
 ### Notes
 - **Milestones M0 (Foundation), M1 (Import & Preprocessing), and M2 (Vision — Detection & OCR)
-  complete.** M2's MVP scope landed across 2.1 (detection), 2.3 (Japanese OCR), and 2.4
-  (confidence surfacing); the optional **batch 2.2 — ML detector adapter** can be picked up any
-  time, as it is not on the MVP-critical path. Next up: **batch 3.1 — reading order** (M3
-  Structure): a manga reading-order heuristic (RTL/LTR/TTB, column-aware) assigning each region a
-  `reading_order_index`, with a manual-override hook for the review editor.
+  complete; M3 (Structure inference) started.** M2's MVP scope landed across 2.1 (detection), 2.3
+  (Japanese OCR), and 2.4 (confidence surfacing); the optional **batch 2.2 — ML detector adapter**
+  can be picked up any time, as it is not on the MVP-critical path. M3 began with 3.1 (reading
+  order). Next up: **batch 3.2 — dialogue grouping** (M3 Structure): grouping ordered regions into
+  `TranslationUnit`s via proximity/type/order with a conversation-chain heuristic.
 
 <!--
 Template for a landed batch:

@@ -222,6 +222,51 @@ def test_run_includes_detect_stage(tmp_path: Path) -> None:
         assert len(store.db.list(Region)) == 1
 
 
+def test_order_assigns_indices_and_status_reports(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    source = tmp_path / "src"
+    source.mkdir()
+    _make_page_with_text(source / "p1.png")
+    runner.invoke(app, ["import", str(target), str(source)])
+    runner.invoke(app, ["detect", str(target)])
+
+    result = runner.invoke(app, ["order", str(target)])
+    assert result.exit_code == 0, result.stdout
+    assert "Ordered 1 region(s)" in result.stdout
+
+    with ProjectStore.open(target) as store:
+        assert store.db.list(Region)[0].reading_order_index == 0
+
+    status = runner.invoke(app, ["status", str(target)])
+    assert "order" in status.stdout
+    assert "1 regions" in status.stdout
+
+
+def test_order_persists_direction_config(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    result = runner.invoke(app, ["order", str(target), "--direction", "ltr"])
+    assert result.exit_code == 0, result.stdout
+    with ProjectStore.open(target) as store:
+        assert store.project.config["structure"]["direction"] == "ltr"
+
+
+def test_run_includes_structure_stage(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    source = tmp_path / "src"
+    source.mkdir()
+    _make_page_with_text(source / "p1.png")
+    runner.invoke(app, ["import", str(target), str(source)])
+
+    result = runner.invoke(app, ["run", str(target)])
+    assert result.exit_code == 0, result.stdout
+    assert "structure" in result.stdout
+    with ProjectStore.open(target) as store:
+        assert store.db.list(Region)[0].reading_order_index is not None
+
+
 def test_ocr_command_persists_config_and_run_includes_ocr_stage(tmp_path: Path) -> None:
     target = tmp_path / "vol"
     runner.invoke(app, ["init", str(target)])

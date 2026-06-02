@@ -18,9 +18,11 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+from mfo.core.enums import ReadingDirection
 from mfo.core.pipeline import Pipeline, Stage
 from mfo.storage import (
     ProjectStore,
+    assign_reading_order,
     detect_regions,
     import_pages,
     ocr_regions,
@@ -42,6 +44,7 @@ from mfo.vision import (
 IMPORT_STAGE = "import"
 PREPROCESS_STAGE = "preprocess"
 DETECT_STAGE = "detect"
+STRUCTURE_STAGE = "structure"
 OCR_STAGE = "ocr"
 
 
@@ -118,6 +121,22 @@ class DetectStage:
         )
 
 
+class StructureStage:
+    """Assign each region a reading-order index (idempotent, offline, geometry-only)."""
+
+    name = STRUCTURE_STAGE
+    deps: tuple[str, ...] = (DETECT_STAGE,)
+
+    def __init__(self, direction: ReadingDirection) -> None:
+        self._direction = direction
+
+    def inputs_hash(self, ctx: ProjectStore) -> str:
+        return f"reading-order@1|{self._direction.value}"
+
+    def run(self, ctx: ProjectStore) -> None:
+        assign_reading_order(ctx, direction=self._direction)
+
+
 class OcrStage:
     """Recognize text on each region and persist it as OCR spans (idempotent, OCR ≠ translation)."""
 
@@ -177,6 +196,13 @@ def save_detect_config(store: ProjectStore, detector: str) -> None:
     store.set_project(store.project.model_copy(update={"config": project_config}))
 
 
+def save_structure_config(store: ProjectStore, direction: ReadingDirection) -> None:
+    """Persist the reading direction so ``mfo run`` reproduces the same order (FR-17, FR-48)."""
+    project_config = dict(store.project.config)
+    project_config["structure"] = {"direction": direction.value}
+    store.set_project(store.project.model_copy(update={"config": project_config}))
+
+
 def save_ocr_config(store: ProjectStore, engine: str) -> None:
     """Persist the chosen OCR engine so ``mfo run`` uses the same one (NFR-17, FR-48)."""
     project_config = dict(store.project.config)
@@ -188,10 +214,11 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
     """Assemble the pipeline from the project's persisted configuration.
 
     The import stage only exists once a source has been configured (via ``mfo import``); the
-    preprocess and detect stages use their saved config if present, otherwise their
-    zero-dependency defaults. OCR is opt-in: its default engine (manga-ocr) is an optional
-    install, so the OCR stage joins the pipeline only once an engine has been chosen via
-    ``mfo ocr``. Later milestones register structure → translate → render here.
+    preprocess, detect, and structure (reading-order) stages use their saved config if present,
+    otherwise their zero-dependency defaults — structure is geometry-only so it stays on the
+    offline path. OCR is opt-in: its default engine (manga-ocr) is an optional install, so the OCR
+    stage joins the pipeline only once an engine has been chosen via ``mfo ocr``. Later milestones
+    register translate → render here.
     """
     stages: list[Stage[ProjectStore]] = []
     config = store.project.config
@@ -210,6 +237,12 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
 
         detect_config = config.get("detect") or {}
         stages.append(DetectStage(get_detector(detect_config.get("detector", "baseline"))))
+
+        structure_config = config.get("structure") or {}
+        direction = ReadingDirection(
+            structure_config.get("direction", store.project.reading_direction.value)
+        )
+        stages.append(StructureStage(direction))
 
         ocr_config = config.get("ocr")
         if ocr_config is not None:

@@ -1,8 +1,9 @@
 """The ``mfo`` command-line application (spec FR-46, FR-47).
 
 Commands are deliberately thin: they resolve configuration and a project, then delegate to the
-core/storage/vision layers. ``init``, ``import``, ``preprocess``, ``detect``, ``ocr``, ``flag``,
-``status``, and ``run`` (the pipeline orchestrator) are functional; ``export`` and ``review`` are
+core/storage/vision layers. ``init``, ``import``, ``preprocess``, ``detect``, ``ocr``, ``order``,
+``flag``, ``status``, and ``run`` (the pipeline orchestrator) are functional; ``export`` and
+``review`` are
 wired to a real project but their processing bodies arrive in later milestones (batches 5.3, 6.2).
 """
 
@@ -22,6 +23,7 @@ from mfo.cli.stages import (
     save_import_config,
     save_ocr_config,
     save_preprocess_config,
+    save_structure_config,
 )
 from mfo.core import (
     DEFAULT_THRESHOLD,
@@ -36,6 +38,7 @@ from mfo.core import (
 from mfo.storage import (
     JsonStateStore,
     ProjectStore,
+    assign_reading_order,
     confidence_report,
     detect_regions,
     flag_low_confidence,
@@ -275,6 +278,25 @@ def ocr(
     typer.secho(f"Recognized {len(spans)} region(s).", fg=typer.colors.GREEN)
 
 
+@app.command()
+def order(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+    direction: Annotated[
+        ReadingDirection | None,
+        typer.Option(help="Reading direction (defaults to the project's)."),
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Recompute even if a current order is cached.")
+    ] = False,
+) -> None:
+    """Infer reading order for detected regions (offline, column-aware; RTL/LTR — FR-16/17)."""
+    with _open_store(path) as store:
+        resolved = direction or store.project.reading_direction
+        save_structure_config(store, resolved)
+        regions = assign_reading_order(store, direction=resolved, force=force)
+    typer.secho(f"Ordered {len(regions)} region(s) ({resolved}).", fg=typer.colors.GREEN)
+
+
 def _stage_line(label: str, count: int, unit: str) -> str:
     mark = "✓" if count else "·"
     state = f"{count} {unit}" if count else "pending"
@@ -294,6 +316,7 @@ def status(
         pages = store.db.list(Page)
         preprocessed = sum(1 for page in pages if page.preprocessing.get("cache_key"))
         regions = store.db.list(Region)
+        ordered = sum(1 for region in regions if region.reading_order_index is not None)
         ocr_spans = store.db.list(OCRSpan)
         units = store.db.list(TranslationUnit)
         translated = sum(1 for unit in units if unit.selected_candidate_id is not None)
@@ -308,6 +331,7 @@ def status(
     typer.echo(_stage_line("import", len(pages), "pages"))
     typer.echo(_stage_line("preprocess", preprocessed, "pages"))
     typer.echo(_stage_line("detect", len(regions), "regions"))
+    typer.echo(_stage_line("order", ordered, "regions"))
     typer.echo(_stage_line("ocr", len(ocr_spans), "spans"))
     typer.echo(_stage_line("translate", translated, "units"))
     typer.echo(_stage_line("render", len(renders), "pages"))

@@ -37,12 +37,15 @@ from mfo.core.pipeline import (
     StageStatus,
     StateStore,
 )
+from mfo.core.reading_order import order_regions
 
 __all__ = [
     # confidence
     "DEFAULT_THRESHOLD",
     "aggregate_confidence",
     "is_low_confidence",
+    # reading order
+    "order_regions",
     # ids
     "new_id",
     "new_ulid",

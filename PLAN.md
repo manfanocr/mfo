@@ -172,8 +172,8 @@ plugs into.
 
 ## M3 — Structure Inference  (MVP-5)
 
-### Batch 3.1 — Reading order
-- **Scope:** Manga reading-order heuristic (RTL, top-to-bottom, column-aware), configurable
+### Batch 3.1 — Reading order ✅ *(landed — see CHANGELOG)*
+- **Scope:** Manga reading-order heuristic (RTL, top-to-bottom, tier-aware), configurable
   direction (FR-17), per-region `reading_order_index`. Manual-override hook for M6.
 - **Satisfies:** FR-16, FR-17, FR-20 (data hook); MVP-5; §10.5.
 - **DoD:** Correct order on RTL sample pages; LTR/TTB toggle tested.

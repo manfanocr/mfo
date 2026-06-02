@@ -72,6 +72,8 @@ class Page(MfoModel):
     detection: dict[str, Any] = Field(default_factory=dict)
     # OCR provenance for this page (engine id + input/regions signature), for cache/skip (NFR-8).
     ocr: dict[str, Any] = Field(default_factory=dict)
+    # Reading-order provenance (direction + regions signature), for cache/skip (NFR-8).
+    structure: dict[str, Any] = Field(default_factory=dict)
 
 
 class Region(MfoModel):
