@@ -69,12 +69,12 @@ def test_status_missing_project_exits_1(tmp_path: Path) -> None:
     assert result.exit_code == 1
 
 
-def test_run_stub_runs_on_valid_project(tmp_path: Path) -> None:
+def test_run_on_valid_project_with_empty_pipeline(tmp_path: Path) -> None:
     target = tmp_path / "vol"
     runner.invoke(app, ["init", str(target)])
     result = runner.invoke(app, ["run", str(target)])
     assert result.exit_code == 0
-    assert "not implemented yet" in result.stdout
+    assert "No pipeline stages" in result.stdout
 
 
 def test_config_file_provides_defaults(tmp_path: Path) -> None:

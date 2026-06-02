@@ -76,6 +76,11 @@ class ProjectLayout:
     def logs_dir(self) -> Path:
         return self.root / "logs"
 
+    @property
+    def pipeline_state_path(self) -> Path:
+        """Where the pipeline orchestrator records per-stage completion (for resume)."""
+        return self.root / "logs" / "pipeline_state.json"
+
     def subdirs(self) -> tuple[Path, ...]:
         return tuple(self.root / name for name in SUBDIRS)
 

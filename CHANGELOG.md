@@ -9,6 +9,25 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 0.5 — Pipeline orchestrator** (M0 Foundation — completes M0):
+  - `mfo.core.pipeline`: a dependency-resolved `Pipeline` of `Stage`s. Each stage declares its
+    `deps` and a pure `inputs_hash(ctx)`; the orchestrator folds a stage's hash with its
+    dependencies' *effective keys* so any upstream change invalidates everything downstream
+    (NFR-7/8). Stages run in topological order (duplicate names, unknown deps, and cycles are
+    rejected) and communicate only through persisted state, so each is independently restartable.
+  - Skip/resume: completed stages are recorded via a `StateStore` keyed by effective input hash;
+    re-running skips unchanged stages, and because each record is flushed immediately, an
+    interrupted run resumes from where it stopped (I-5, FR-5). `InMemoryStateStore` (core) for
+    one-shot/test runs; `JsonStateStore` (storage) persists to `logs/pipeline_state.json` via
+    crash-safe atomic writes.
+  - Stage selection: `select(only=/from_=/to=)` resolves `--stage`/`--from`/`--to` into the
+    ordered set to execute (with full upstream/downstream closure), plus a `--force` override.
+    Wired into `mfo run`, which now builds and executes the (still-empty) pipeline; real stages
+    register from M1 onward.
+  - Tests: dummy 2-stage pipeline ordering, skip-on-rerun, downstream invalidation, force,
+    interruption→resume (in-memory and on-disk across simulated process restarts), all selection
+    modes, and topology validation (cycle/duplicate/unknown-dep).
+  - Satisfies: I-5, FR-5, NFR-7, NFR-8; spec §10, §14.2, §20.
 - **Batch 0.4 — CLI skeleton & config** (M0 Foundation):
   - `mfo.cli`: a Typer app (`mfo`) with `init`, `status`, `run`, `export`, `review` commands and
     a `--version`/`--log-level` callback. `init` creates a project (name defaults to the
@@ -62,7 +81,8 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   `CHANGELOG.md`. Derived from `mfo_design_notes_spec.md`.
 
 ### Notes
-- Next up: **batch 0.5 — Pipeline orchestrator** (stage interface, caching, resume) — completes M0.
+- **Milestone M0 (Foundation) complete.** Next up: **M1 — Import & Preprocessing**, starting with
+  batch 1.1 (directory import & page ordering).
 
 <!--
 Template for a landed batch:

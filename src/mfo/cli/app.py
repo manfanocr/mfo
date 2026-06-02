@@ -24,7 +24,8 @@ from mfo.core import (
     RenderArtifact,
     TranslationUnit,
 )
-from mfo.storage import ProjectStore
+from mfo.core.pipeline import Pipeline, Stage
+from mfo.storage import JsonStateStore, ProjectStore
 
 app = typer.Typer(
     add_completion=False,
@@ -150,17 +151,51 @@ def _not_yet(feature: str, batch: str) -> None:
     )
 
 
+def _build_pipeline() -> Pipeline[ProjectStore]:
+    """Assemble the processing pipeline.
+
+    Stages (import → preprocess → detect → ocr → structure → translate → render) are
+    registered as their milestones land; until then the pipeline is empty but fully wired.
+    """
+    stages: list[Stage[ProjectStore]] = []
+    return Pipeline(stages)
+
+
 @app.command()
 def run(
     path: Annotated[Path, typer.Argument(help="Project directory.")],
     stage: Annotated[
         str | None, typer.Option("--stage", help="Run only this pipeline stage.")
     ] = None,
+    from_: Annotated[
+        str | None, typer.Option("--from", help="Run from this stage and everything downstream.")
+    ] = None,
+    to: Annotated[
+        str | None, typer.Option("--to", help="Run up to and including this stage.")
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Re-run stages even if their inputs are unchanged.")
+    ] = False,
 ) -> None:
-    """Run the processing pipeline (placeholder)."""
-    with _open_store(path):
-        pass
-    _not_yet("The processing pipeline", "0.5")
+    """Run the processing pipeline."""
+    with _open_store(path) as store:
+        pipeline = _build_pipeline()
+        if not pipeline.stage_names():
+            typer.secho(
+                "No pipeline stages are implemented yet (they land from milestone M1 onward).",
+                fg=typer.colors.YELLOW,
+            )
+            return
+        state = JsonStateStore(store.layout.pipeline_state_path)
+        try:
+            results = pipeline.run(store, state, only=stage, from_=from_, to=to, force=force)
+        except ValueError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from None
+        for result in results:
+            mark = "skip" if result.skipped else "run "
+            typer.echo(f"  [{mark}] {result.name}")
+        typer.secho("Pipeline complete.", fg=typer.colors.GREEN)
 
 
 @app.command()

@@ -105,7 +105,7 @@ plugs into.
 - **DoD:** `mfo init <dir>` creates a valid empty project; `mfo status` reports stage state;
   `--help` documented.
 
-### Batch 0.5 — Pipeline orchestrator
+### Batch 0.5 — Pipeline orchestrator ✅ *(landed — see CHANGELOG)*
 - **Scope:** Stage interface (`Stage.run(ctx) -> result`), dependency/ordering, per-stage cache
   invalidation by input hash, `--stage`/`--from`/`--to` selection, resume support.
 - **Satisfies:** I-5, FR-5, NFR-7/8; §10 pipeline contract; implementation note §20.
@@ -300,7 +300,7 @@ plugs into.
 
 ## Tracking
 
-- [ ] M0 Foundation
+- [x] M0 Foundation
 - [ ] M1 Import & Preprocess
 - [ ] M2 Vision
 - [ ] M3 Structure

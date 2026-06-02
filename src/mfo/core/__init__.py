@@ -23,6 +23,15 @@ from mfo.core.models import (
     TranslationCandidate,
     TranslationUnit,
 )
+from mfo.core.pipeline import (
+    InMemoryStateStore,
+    Pipeline,
+    Stage,
+    StageRecord,
+    StageResult,
+    StageStatus,
+    StateStore,
+)
 
 __all__ = [
     # ids
@@ -48,4 +57,12 @@ __all__ = [
     "TranslationUnit",
     "EditRecord",
     "RenderArtifact",
+    # pipeline
+    "Pipeline",
+    "Stage",
+    "StageRecord",
+    "StageResult",
+    "StageStatus",
+    "StateStore",
+    "InMemoryStateStore",
 ]

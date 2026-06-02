@@ -8,6 +8,7 @@ from mfo.storage.db import SCHEMA_VERSION, Database
 from mfo.storage.hashing import content_key, sha256_bytes, sha256_file
 from mfo.storage.layout import DB_NAME, MANIFEST_NAME, SUBDIRS, ProjectLayout
 from mfo.storage.manifest import MANIFEST_VERSION, Manifest, read_manifest, write_manifest
+from mfo.storage.pipeline_state import JsonStateStore
 from mfo.storage.project import ProjectStore
 
 __all__ = [
@@ -33,6 +34,8 @@ __all__ = [
     # db
     "Database",
     "SCHEMA_VERSION",
+    # pipeline state
+    "JsonStateStore",
     # project
     "ProjectStore",
 ]
