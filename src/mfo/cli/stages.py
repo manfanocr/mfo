@@ -23,21 +23,26 @@ from mfo.storage import (
     ProjectStore,
     detect_regions,
     import_pages,
+    ocr_regions,
     preprocess_pages,
 )
 from mfo.vision import (
+    OCREngine,
     PageOrder,
     PreprocessConfig,
     RegionDetector,
     detect_file,
     discover_images,
     get_detector,
+    get_ocr_engine,
     preprocess_file,
+    recognize_file,
 )
 
 IMPORT_STAGE = "import"
 PREPROCESS_STAGE = "preprocess"
 DETECT_STAGE = "detect"
+OCR_STAGE = "ocr"
 
 
 class ImportStage:
@@ -113,6 +118,29 @@ class DetectStage:
         )
 
 
+class OcrStage:
+    """Recognize text on each region and persist it as OCR spans (idempotent, OCR ≠ translation)."""
+
+    name = OCR_STAGE
+    deps: tuple[str, ...] = (DETECT_STAGE,)
+
+    def __init__(self, engine: OCREngine) -> None:
+        self._engine = engine
+
+    def _signature(self) -> str:
+        return f"{self._engine.name}@{self._engine.version}"
+
+    def inputs_hash(self, ctx: ProjectStore) -> str:
+        return self._signature()
+
+    def run(self, ctx: ProjectStore) -> None:
+        ocr_regions(
+            ctx,
+            recognize=lambda path, bbox: recognize_file(path, bbox, self._engine),
+            signature=self._signature(),
+        )
+
+
 def save_import_config(
     store: ProjectStore,
     *,
@@ -149,12 +177,21 @@ def save_detect_config(store: ProjectStore, detector: str) -> None:
     store.set_project(store.project.model_copy(update={"config": project_config}))
 
 
+def save_ocr_config(store: ProjectStore, engine: str) -> None:
+    """Persist the chosen OCR engine so ``mfo run`` uses the same one (NFR-17, FR-48)."""
+    project_config = dict(store.project.config)
+    project_config["ocr"] = {"engine": engine}
+    store.set_project(store.project.model_copy(update={"config": project_config}))
+
+
 def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
     """Assemble the pipeline from the project's persisted configuration.
 
     The import stage only exists once a source has been configured (via ``mfo import``); the
-    preprocess and detect stages use their saved config if present, otherwise defaults. Later
-    milestones register ocr → structure → translate → render here.
+    preprocess and detect stages use their saved config if present, otherwise their
+    zero-dependency defaults. OCR is opt-in: its default engine (manga-ocr) is an optional
+    install, so the OCR stage joins the pipeline only once an engine has been chosen via
+    ``mfo ocr``. Later milestones register structure → translate → render here.
     """
     stages: list[Stage[ProjectStore]] = []
     config = store.project.config
@@ -173,5 +210,9 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
 
         detect_config = config.get("detect") or {}
         stages.append(DetectStage(get_detector(detect_config.get("detector", "baseline"))))
+
+        ocr_config = config.get("ocr")
+        if ocr_config is not None:
+            stages.append(OcrStage(get_ocr_engine(ocr_config.get("engine", "manga-ocr"))))
 
     return Pipeline(stages)

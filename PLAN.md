@@ -154,7 +154,7 @@ plugs into.
 - **Satisfies:** FR-11, FR-14 (best-effort), NFR-22; SG-5 groundwork.
 - **DoD:** Optional install path; falls back to baseline if model absent; classifies types.
 
-### Batch 2.3 — OCR adapter + Japanese (manga-ocr)
+### Batch 2.3 — OCR adapter + Japanese (manga-ocr) ✅ *(landed — see CHANGELOG)*
 - **Scope:** `OCREngine` adapter interface; manga-ocr adapter (JP, vertical text), per-region
   `OCRSpan` with confidence + alternatives where available; OCR stored separately from
   translation.

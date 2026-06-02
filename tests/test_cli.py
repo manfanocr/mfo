@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 
+import pytest
 from PIL import Image, ImageDraw
 from typer.testing import CliRunner
 
 from mfo.cli import app
+from mfo.cli.stages import build_pipeline
 from mfo.core import Page, Region
 from mfo.storage import ProjectStore
 
 runner = CliRunner()
+
+_MANGA_OCR_INSTALLED = importlib.util.find_spec("manga_ocr") is not None
 
 
 def _make_png(path: Path, size: tuple[int, int] = (3, 4)) -> None:
@@ -213,6 +218,47 @@ def test_run_includes_detect_stage(tmp_path: Path) -> None:
     assert "detect" in result.stdout
     with ProjectStore.open(target) as store:
         assert len(store.db.list(Region)) == 1
+
+
+def test_ocr_command_persists_config_and_run_includes_ocr_stage(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    source = tmp_path / "src"
+    source.mkdir()
+    _make_png(source / "p1.png")
+    runner.invoke(app, ["import", str(target), str(source)])
+
+    # No regions detected yet → 0 spans and no OCR engine model is loaded (no dependency needed).
+    result = runner.invoke(app, ["ocr", str(target)])
+    assert result.exit_code == 0, result.stdout
+    assert "Recognized 0 region(s)" in result.stdout
+
+    # Choosing an engine opts OCR into the pipeline (it is off until configured).
+    with ProjectStore.open(target) as store:
+        assert store.project.config["ocr"]["engine"] == "manga-ocr"
+        assert "ocr" in build_pipeline(store).stage_names()
+
+
+def test_ocr_unknown_engine_exits_1(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    result = runner.invoke(app, ["ocr", str(target), "--engine", "nope"])
+    assert result.exit_code == 1
+
+
+@pytest.mark.skipif(_MANGA_OCR_INSTALLED, reason="manga-ocr is installed; can't test its absence")
+def test_ocr_missing_dependency_exits_1(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    source = tmp_path / "src"
+    source.mkdir()
+    _make_page_with_text(source / "p1.png")
+    runner.invoke(app, ["import", str(target), str(source)])
+    runner.invoke(app, ["detect", str(target)])
+
+    result = runner.invoke(app, ["ocr", str(target)])
+    assert result.exit_code == 1
+    assert "pip install" in result.output
 
 
 def test_config_file_provides_defaults(tmp_path: Path) -> None:

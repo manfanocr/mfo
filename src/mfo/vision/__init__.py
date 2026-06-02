@@ -24,6 +24,15 @@ from mfo.vision.ingest import (
     SkippedImage,
     discover_images,
 )
+from mfo.vision.ocr import (
+    MangaOcrEngine,
+    OcrDependencyError,
+    OCREngine,
+    RecognizedText,
+    get_ocr_engine,
+    manga_ocr_engine,
+    recognize_file,
+)
 from mfo.vision.preprocess import (
     PreprocessConfig,
     detect_orientation,
@@ -52,6 +61,14 @@ __all__ = [
     "PageOrder",
     "SkippedImage",
     "discover_images",
+    # ocr
+    "MangaOcrEngine",
+    "OCREngine",
+    "OcrDependencyError",
+    "RecognizedText",
+    "get_ocr_engine",
+    "manga_ocr_engine",
+    "recognize_file",
     # preprocess
     "PreprocessConfig",
     "detect_orientation",

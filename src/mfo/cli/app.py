@@ -1,9 +1,9 @@
 """The ``mfo`` command-line application (spec FR-46, FR-47).
 
 Commands are deliberately thin: they resolve configuration and a project, then delegate to the
-core/storage/vision layers. ``init``, ``import``, ``preprocess``, ``detect``, ``status``, and
-``run`` (the pipeline orchestrator) are functional; ``export`` and ``review`` are wired to a real
-project but their processing bodies arrive in later milestones (batches 5.3, 6.2).
+core/storage/vision layers. ``init``, ``import``, ``preprocess``, ``detect``, ``ocr``, ``status``,
+and ``run`` (the pipeline orchestrator) are functional; ``export`` and ``review`` are wired to a
+real project but their processing bodies arrive in later milestones (batches 5.3, 6.2).
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from mfo.cli.stages import (
     build_pipeline,
     save_detect_config,
     save_import_config,
+    save_ocr_config,
     save_preprocess_config,
 )
 from mfo.core import (
@@ -36,15 +37,19 @@ from mfo.storage import (
     ProjectStore,
     detect_regions,
     import_pages,
+    ocr_regions,
     preprocess_pages,
 )
 from mfo.vision import (
+    OcrDependencyError,
     PageOrder,
     PreprocessConfig,
     detect_file,
     discover_images,
     get_detector,
+    get_ocr_engine,
     preprocess_file,
+    recognize_file,
 )
 
 app = typer.Typer(
@@ -235,6 +240,36 @@ def detect(
             force=force,
         )
     typer.secho(f"Detected {len(regions)} region(s).", fg=typer.colors.GREEN)
+
+
+@app.command()
+def ocr(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+    engine: Annotated[str, typer.Option("--engine", help="OCR engine to use.")] = "manga-ocr",
+    force: Annotated[
+        bool, typer.Option("--force", help="Re-run OCR even if a current result is cached.")
+    ] = False,
+) -> None:
+    """Recognize text on detected regions (default engine manga-ocr — install with mfo[ocr])."""
+    try:
+        ocr_engine = get_ocr_engine(engine)
+    except ValueError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from None
+    signature = f"{ocr_engine.name}@{ocr_engine.version}"
+    with _open_store(path) as store:
+        save_ocr_config(store, engine)
+        try:
+            spans = ocr_regions(
+                store,
+                recognize=lambda image_path, bbox: recognize_file(image_path, bbox, ocr_engine),
+                signature=signature,
+                force=force,
+            )
+        except OcrDependencyError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from None
+    typer.secho(f"Recognized {len(spans)} region(s).", fg=typer.colors.GREEN)
 
 
 def _stage_line(label: str, count: int, unit: str) -> str:

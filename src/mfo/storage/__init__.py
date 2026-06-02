@@ -10,6 +10,7 @@ from mfo.storage.hashing import content_key, sha256_bytes, sha256_file
 from mfo.storage.ingest import SourceImage, import_pages
 from mfo.storage.layout import DB_NAME, MANIFEST_NAME, SUBDIRS, ProjectLayout
 from mfo.storage.manifest import MANIFEST_VERSION, Manifest, read_manifest, write_manifest
+from mfo.storage.ocr import RecognizedSpan, ocr_regions
 from mfo.storage.pipeline_state import JsonStateStore
 from mfo.storage.preprocess import preprocess_pages
 from mfo.storage.project import ProjectStore
@@ -47,6 +48,9 @@ __all__ = [
     # detect
     "detect_regions",
     "RegionCandidate",
+    # ocr
+    "ocr_regions",
+    "RecognizedSpan",
     # project
     "ProjectStore",
 ]

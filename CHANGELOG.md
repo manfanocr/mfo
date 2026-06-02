@@ -9,6 +9,32 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 2.3 — OCR adapter + Japanese (manga-ocr)** (M2 Vision — Detection & OCR):
+  - `mfo.vision.ocr`: a swappable `OCREngine` protocol (NFR-17) plus the default `MangaOcrEngine`,
+    wrapping `manga-ocr` for offline Japanese recognition incl. vertical text. manga-ocr is an
+    **optional** dependency (`pip install 'mfo[ocr]'`) loaded lazily, so importing the vision layer
+    never pulls in torch/transformers and the rest of the pipeline runs without it (I-7). Engines
+    recognize a region *crop* and return a `RecognizedText` (text + optional confidence/alternatives,
+    FR-12/13). A `get_ocr_engine` registry resolves engines by config name; `recognize_file` opens the
+    original page read-only (I-1) and crops to the region's source-space bbox (I-2).
+  - `mfo.storage.ocr.ocr_regions`: persists one `OCRSpan` per region linked to it, with the
+    recognition callable *injected* so storage stays imaging-free (mirrors detect/preprocess). OCR is
+    kept separate from translation (FR-15). Each page records an OCR signature folding
+    `hash(source, engine-id, regions-fingerprint)`, so re-running skips unchanged pages (NFR-8) and a
+    re-detection (changed regions) correctly invalidates the OCR; a (re)OCR'd page has its prior spans
+    cleared first, so OCR is idempotent and a forced recompute leaves no stale spans. Adds a
+    `Page.ocr` field.
+  - `OcrStage` (deps: detect) wired into the pipeline as **opt-in**: since its default engine is an
+    optional install, the stage joins `mfo run` only once an engine is chosen via the new `mfo ocr`
+    command (`--engine`/`--force`), which persists the choice and reports a clear, actionable error if
+    the engine's dependency is missing. `mfo status` already surfaces the span count.
+  - Tests: OCR engine registry + unknown-engine error, `recognize_file` cropping/clamping with a spy
+    engine, missing-dependency error surfaced clearly; storage persistence + region linkage +
+    confidence/alternatives + signature + reopen, idempotent skip, force/engine-change recompute
+    without duplicates, re-detection invalidation, region-less page skip; CLI `ocr` config persistence
+    + pipeline inclusion, unknown-engine exit, and missing-dependency exit. Adds the optional
+    `mfo[ocr]` extra and a mypy override for the stub-less `manga_ocr` module.
+  - Satisfies: FR-6, FR-10, FR-12, FR-13, FR-15; MVP-4; I-1, I-2, I-7; NFR-8, NFR-17; spec §10.4.
 - **Batch 2.1 — Region detection adapter + baseline** (M2 Vision — Detection & OCR):
   - `mfo.vision.detect`: a swappable `RegionDetector` protocol (NFR-17) plus the default
     `ConnectedComponentsDetector` — a dependency-light OpenCV baseline (Otsu threshold → morphological
@@ -155,8 +181,10 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 
 ### Notes
 - **Milestones M0 (Foundation) and M1 (Import & Preprocessing) complete; M2 (Vision) in progress.**
-  Next up: **batch 2.2 — ML detector adapter (optional)**: an adapter for a trained bubble/text
-  detector with lazy model download that falls back to the baseline if the model is absent.
+  Detection baseline (2.1) and Japanese OCR (2.3) have landed. Next up: **batch 2.4 — confidence
+  surfacing**: aggregate region/OCR confidence, report low-confidence counts in `mfo status`, and
+  store flags for downstream highlighting (the optional **batch 2.2 — ML detector adapter** can be
+  picked up any time, as it is not on the MVP-critical path).
 
 <!--
 Template for a landed batch:
