@@ -25,7 +25,7 @@ import numpy as np
 from numpy.typing import NDArray
 from PIL import Image
 
-from mfo.core.enums import RegionType
+from mfo.core.enums import RegionStatus, RegionType
 from mfo.core.geometry import BBox
 
 Uint8Array = NDArray[np.uint8]
@@ -35,11 +35,18 @@ _log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class DetectedRegion:
-    """A candidate text region in source-image pixel space."""
+    """A candidate text region in source-image pixel space.
+
+    ``status`` lets a detector mark a box it is unsure about (e.g. a panel-/frame-sized blob from
+    the heuristic baseline) as :attr:`RegionStatus.NEEDS_REVIEW` rather than dropping it, so the
+    box stays editable and surfaces in the review queue instead of masquerading as a confident
+    bubble (I-4). Most detections are :attr:`RegionStatus.AUTO`.
+    """
 
     bbox: BBox
     type: RegionType
     confidence: float
+    status: RegionStatus = RegionStatus.AUTO
 
 
 class RegionDetector(Protocol):
@@ -53,10 +60,16 @@ class RegionDetector(Protocol):
 
 @dataclass(frozen=True)
 class BaselineConfig:
-    """Heuristic thresholds for the connected-components baseline."""
+    """Heuristic thresholds for the connected-components baseline.
+
+    The baseline can't tell a speech bubble from a dense panel, so rather than trust every blob it
+    keeps the doubtful ones but flags them for review (see ``suspect_area_frac``/``suspect_fill``).
+    Only specks and near-page-spanning blobs are dropped outright.
+    """
 
     min_area_frac: float = 0.0004  # ignore specks smaller than this fraction of the page
-    max_area_frac: float = 0.4  # ignore panel-/page-sized blobs
+    max_area_frac: float = 0.85  # drop only near-page-spanning blobs (e.g. a whole-page scan)
+    suspect_area_frac: float = 0.12  # bigger than a typical bubble → keep but flag for review
     close_frac: float = 0.015  # morphological-close kernel as a fraction of the short edge
     min_fill: float = 0.12  # min filled fraction of the bounding box to count as text
 
@@ -124,11 +137,21 @@ class ConnectedComponentsDetector:
             fill = area / float(w * h)
             if fill < config.min_fill:
                 continue
+            # A speech bubble is small; a panel/frame blob is large. Keep an oversized blob but flag
+            # it for review with a capped score (I-4) instead of passing it off as a confident
+            # bubble or silently dropping what might be a real region.
+            suspicious = area_frac >= config.suspect_area_frac
+            confidence = _confidence(fill, area_frac)
+            status = RegionStatus.AUTO
+            if suspicious:
+                confidence = round(min(confidence, 0.3), 3)
+                status = RegionStatus.NEEDS_REVIEW
             regions.append(
                 DetectedRegion(
                     bbox=BBox(x=float(x), y=float(y), width=float(w), height=float(h)),
                     type=_classify(w, h),
-                    confidence=_confidence(fill, area_frac),
+                    confidence=confidence,
+                    status=status,
                 )
             )
         regions.sort(key=lambda r: (r.bbox.y, r.bbox.x))

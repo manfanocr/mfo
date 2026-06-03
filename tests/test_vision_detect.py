@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from mfo.core.enums import RegionType
+from mfo.core.enums import RegionStatus, RegionType
 from mfo.core.geometry import BBox
 from mfo.vision.detect import (
     DEFAULT_CLASS_LABELS,
@@ -85,6 +85,25 @@ def test_tiny_speck_is_filtered_out() -> None:
     img = np.full((300, 300, 3), 255, dtype=np.uint8)
     img[10:12, 10:12] = 0  # 2x2 speck — below min area fraction
     assert ConnectedComponentsDetector().detect(img) == []
+
+
+def test_oversized_blob_is_kept_but_flagged_for_review() -> None:
+    # A panel-sized block (>suspect_area_frac of the page) must not pass as a confident bubble: it
+    # is kept (not dropped) but flagged needs_review with a capped score (bug: whole frames as
+    # bubbles; I-4).
+    img = np.full((300, 300, 3), 255, dtype=np.uint8)
+    img[30:180, 30:180] = 0  # 150x150 = 25% of the page → suspicious
+    [region] = ConnectedComponentsDetector().detect(img)
+    assert region.status is RegionStatus.NEEDS_REVIEW
+    assert region.confidence <= 0.3
+
+
+def test_normal_block_is_auto() -> None:
+    # A small, well-formed block stays trusted (status auto), so flagging is targeted not blanket.
+    img = np.full((300, 300, 3), 255, dtype=np.uint8)
+    img[20:40, 20:60] = 0  # 40x20 ≈ 0.9% of the page
+    [region] = ConnectedComponentsDetector().detect(img)
+    assert region.status is RegionStatus.AUTO
 
 
 def test_get_detector_returns_baseline_and_rejects_unknown() -> None:

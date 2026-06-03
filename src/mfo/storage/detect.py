@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Protocol
 
 from mfo.core import Page, Region
-from mfo.core.enums import RegionType
+from mfo.core.enums import RegionStatus, RegionType
 from mfo.core.geometry import BBox
 from mfo.storage.hashing import content_key, sha256_file
 from mfo.storage.project import ProjectStore
@@ -67,6 +67,8 @@ def detect_regions(
                 bbox=candidate.bbox,
                 type=candidate.type,
                 confidence=candidate.confidence,
+                # A detector may flag a doubtful box for review; default AUTO if it doesn't.
+                status=getattr(candidate, "status", RegionStatus.AUTO),
             )
             for candidate in candidates
         ]
