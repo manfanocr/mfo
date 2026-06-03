@@ -93,22 +93,22 @@ async function loadProject() {
 
   const lowTotal = data.pages.reduce((n, pg) => n + pg.low_confidence, 0);
   status(`${data.pages.length} page(s), ${lowTotal} low-confidence region(s).`);
-  if (data.pages.length) selectPage(data.pages[0].id);
+  if (data.pages.length) selectPage(data.pages[0].page_id);
 }
 
 function renderPageList() {
   const list = $("#page-list");
   list.replaceChildren();
   for (const page of state.pages) {
-    const li = el("li", { "data-page-id": page.id }, [
+    const li = el("li", { "data-page-id": page.page_id }, [
       el("span", { class: "page-idx", text: String(page.index + 1) }),
       el("span", { class: "muted", text: `${page.regions}r / ${page.units}u` }),
     ]);
     if (page.low_confidence > 0) {
       li.append(el("span", { class: "lc-badge", text: String(page.low_confidence) }));
     }
-    if (state.page && page.id === state.page.page_id) li.classList.add("active");
-    li.addEventListener("click", () => selectPage(page.id));
+    if (state.page && page.page_id === state.page.page_id) li.classList.add("active");
+    li.addEventListener("click", () => selectPage(page.page_id));
     list.append(li);
   }
 }
@@ -701,9 +701,9 @@ function stepRegion(delta) {
 
 function stepPage(delta) {
   if (!state.pages.length || !state.page) return;
-  const cur = state.pages.findIndex((p) => p.id === state.page.page_id);
+  const cur = state.pages.findIndex((p) => p.page_id === state.page.page_id);
   const next = Math.min(state.pages.length - 1, Math.max(0, cur + delta));
-  if (next !== cur) selectPage(state.pages[next].id);
+  if (next !== cur) selectPage(state.pages[next].page_id);
 }
 
 function focusEdit() {
