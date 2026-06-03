@@ -118,6 +118,10 @@ it isn't context-aware — use `api` for that.
 This is the **context-aware** path: each line is sent with its nearby dialogue, the page locator,
 the requested style (`--style`), and any pinned glossary terms.
 
+If you ordered the project panel-aware (`mfo order <proj> --panels`), that nearby-dialogue window
+is **scoped to the bubble's own panel** — context no longer bleeds in from an adjacent frame (SG-1).
+Offline adapters (`argos`/`deepl`) ignore context, so this only affects the `api`/LLM path.
+
 ```bash
 export MFO_API_KEY="sk-…"
 export MFO_API_BASE_URL="https://api.openai.com/v1"     # or any compatible gateway

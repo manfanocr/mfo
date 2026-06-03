@@ -207,6 +207,44 @@ def test_toggling_panel_mode_recomputes(tmp_path: Path) -> None:
         assert _order_by_index(store, page) == [ids["rt"], ids["rb"], ids["l"]]  # panel-aware
 
 
+def test_panel_index_is_stamped_on_regions(tmp_path: Path) -> None:
+    # Panel-aware ordering records each region's frame so context can stay inside it (SG-1).
+    with _store(tmp_path / "proj") as store:
+        page = _page(store)
+        ids = _tricky_regions(store, page)
+
+        assign_reading_order(store, direction=ReadingDirection.RTL, detect_panels=_fake_panels)
+
+        by_id = {r.id: r for r in store.db.list(Region, where=("page_id", page.id))}
+        assert by_id[ids["l"]].panel_index == 0  # left, full-height panel
+        assert by_id[ids["rt"]].panel_index == 1  # right-top
+        assert by_id[ids["rb"]].panel_index == 2  # right-bottom
+
+
+def test_flat_mode_leaves_panel_index_none(tmp_path: Path) -> None:
+    with _store(tmp_path / "proj") as store:
+        page = _page(store)
+        _tricky_regions(store, page)
+        assign_reading_order(store, direction=ReadingDirection.RTL)
+        regions = store.db.list(Region, where=("page_id", page.id))
+        assert all(r.panel_index is None for r in regions)
+
+
+def test_disabling_panels_clears_a_stale_panel_index(tmp_path: Path) -> None:
+    with _store(tmp_path / "proj") as store:
+        page = _page(store)
+        _tricky_regions(store, page)
+        assign_reading_order(store, direction=ReadingDirection.RTL, detect_panels=_fake_panels)
+        assert any(
+            r.panel_index is not None for r in store.db.list(Region, where=("page_id", page.id))
+        )
+
+        # Toggling panels off changes the signature, re-runs, and clears the stale panel index.
+        assign_reading_order(store, direction=ReadingDirection.RTL)
+        regions = store.db.list(Region, where=("page_id", page.id))
+        assert all(r.panel_index is None for r in regions)
+
+
 def test_panel_mode_is_idempotent(tmp_path: Path) -> None:
     with _store(tmp_path / "proj") as store:
         page = _page(store)

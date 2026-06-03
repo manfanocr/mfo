@@ -29,19 +29,63 @@ def build_context(
     page_index: int,
     page_count: int,
     window: int = DEFAULT_NEIGHBOR_WINDOW,
+    panels: Sequence[int | None] | None = None,
 ) -> dict[str, Any]:
     """Assemble the context bundle for the unit at ``index`` among a page's ordered ``sources``.
 
     ``preceding``/``following`` carry up to ``window`` neighbouring source texts in reading order
     (empty strings dropped), giving the translator nearby dialogue; ``page_index``/``page_count``
     locate the page in the volume. The result is a plain JSON-serializable dict.
+
+    When ``panels`` is given (one panel id per source, parallel to ``sources``) the neighbour window
+    is scoped to the unit's own panel (SG-1, §12.5): only same-panel units count as neighbours, so
+    context no longer bleeds across frames, and the unit's ``panel`` is recorded in the bundle.
+    Units outside every panel (``panel`` is ``None``) keep the plain reading-order window. The
+    grouping stays a *context* refinement — units are never merged (one bubble = one unit).
     """
-    start = max(0, index - window)
-    preceding = [text for text in sources[start:index] if text]
-    following = [text for text in sources[index + 1 : index + 1 + window] if text]
+    if panels is None:
+        start = max(0, index - window)
+        preceding = [text for text in sources[start:index] if text]
+        following = [text for text in sources[index + 1 : index + 1 + window] if text]
+        return {
+            "page_index": page_index,
+            "page_count": page_count,
+            "preceding": preceding,
+            "following": following,
+        }
+
+    panel = panels[index]
+    preceding = _panel_neighbours(sources, panels, index, panel, window, step=-1)
+    following = _panel_neighbours(sources, panels, index, panel, window, step=1)
     return {
         "page_index": page_index,
         "page_count": page_count,
+        "panel": panel,
         "preceding": preceding,
         "following": following,
     }
+
+
+def _panel_neighbours(
+    sources: Sequence[str],
+    panels: Sequence[int | None],
+    index: int,
+    panel: int | None,
+    window: int,
+    *,
+    step: int,
+) -> list[str]:
+    """Up to ``window`` neighbour texts walking outward from ``index`` in direction ``step``.
+
+    With a known ``panel`` the walk stops at the first unit in a different panel, keeping context
+    inside the frame; an out-of-panel unit (``panel is None``) keeps the plain reading-order window.
+    """
+    out: list[str] = []
+    j = index + step
+    while 0 <= j < len(sources) and len(out) < window:
+        if panel is not None and panels[j] != panel:
+            break
+        if sources[j]:
+            out.append(sources[j])
+        j += step
+    return out if step > 0 else out[::-1]

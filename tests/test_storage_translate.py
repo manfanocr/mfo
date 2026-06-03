@@ -123,6 +123,64 @@ def test_context_includes_neighbouring_units(tmp_path: Path) -> None:
         assert seen["first"]["following"] == ["second"]
 
 
+def _panel_region(
+    store: ProjectStore, page: Page, *, order: int, text: str, panel: int | None
+) -> Region:
+    region = Region(
+        page_id=page.id,
+        bbox=BBox(x=0, y=order * 50, width=40, height=40),
+        reading_order_index=order,
+        panel_index=panel,
+    )
+    store.db.save(region)
+    store.db.save(OCRSpan(region_id=region.id, text=text))
+    return region
+
+
+def test_context_is_scoped_to_the_panel(tmp_path: Path) -> None:
+    # With panel data, a unit's context window does not cross the frame boundary (SG-1).
+    seen: dict[str, dict[str, object]] = {}
+
+    def capture(source: str, context: dict[str, object]) -> _Result:
+        seen[source] = context
+        return _Result(text=source)
+
+    with _store(tmp_path / "proj") as store:
+        page = _page(store)
+        # Panel 0: a, b ; panel 1: c, d — in reading order a, b, c, d.
+        for order, (text, panel) in enumerate([("a", 0), ("b", 0), ("c", 1), ("d", 1)]):
+            _unit(store, page, [_panel_region(store, page, order=order, text=text, panel=panel)])
+
+        translate_units(store, translate=capture, signature="fake@1", target_lang="en")
+
+        assert seen["b"]["panel"] == 0
+        assert seen["b"]["following"] == []  # c/d are in panel 1 — no bleed across the boundary
+        assert seen["c"]["panel"] == 1
+        assert seen["c"]["preceding"] == []  # a/b are in panel 0
+        assert seen["c"]["following"] == ["d"]
+
+
+def test_no_panel_data_keeps_the_flat_window(tmp_path: Path) -> None:
+    # No region carries a panel → bundle is identical to the pre-8.4 flat window (no `panel` key).
+    seen: dict[str, dict[str, object]] = {}
+
+    def capture(source: str, context: dict[str, object]) -> _Result:
+        seen[source] = context
+        return _Result(text=source)
+
+    with _store(tmp_path / "proj") as store:
+        page = _page(store)
+        first = _region(store, page, order=0, text="first")
+        second = _region(store, page, order=1, text="second")
+        _unit(store, page, [first])
+        _unit(store, page, [second])
+
+        translate_units(store, translate=capture, signature="fake@1", target_lang="en")
+
+        assert "panel" not in seen["first"]
+        assert seen["first"]["following"] == ["second"]  # flat window unaffected (offline path)
+
+
 def test_candidates_survive_reopen(tmp_path: Path) -> None:
     with _store(tmp_path / "proj") as store:
         page = _page(store)

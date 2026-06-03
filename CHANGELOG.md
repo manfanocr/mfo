@@ -10,6 +10,21 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 
 ### M8 — Hardening & Stretch
 
+#### Added — Batch 8.4: Panel-aware context (2026-06-04)
+- **Translation context stays inside the bubble's panel.** When a project is ordered panel-aware
+  (`mfo order --panels`), the panel-aware reading-order stage now stamps each region with its
+  `Region.panel_index` (`panel_of` exposed from `mfo.core.reading_order`; cleared back to `None` on
+  the flat path). `mfo.core.context.build_context` gained a `panels=` argument: the neighbour window
+  is scoped to the unit's own panel — only same-panel units count as `preceding`/`following`, so
+  context no longer bleeds across frames (SG-1) — and the unit's `panel` is recorded in the bundle.
+  A region outside every panel (`panel_index is None`) keeps the plain reading-order window.
+- **Units are never merged — this is a *context* refinement.** One bubble = one unit stays;
+  `translate_units` derives each unit's panel from its lead (first reading-order) region and threads
+  it into `build_context`. A project with no panel data passes `panels=None`, producing a
+  byte-identical bundle to before (no `panel` key, no spurious re-translate). Offline adapters
+  (`argos`/`deepl`) ignore context, so only the `api`/AI path benefits — the offline core is
+  unaffected (I-7). USER_GUIDE notes the `--panels` interaction. (SG-1; FR-18, FR-22; §12.5)
+
 #### Added — Batch 8.3: Formal plugin system (entry-point discovery) (2026-06-04)
 - **Third-party adapters register via Python entry points — no fork required.** New
   `mfo.core.plugins` centralizes adapter resolution: `discover_plugins(group)` loads entry points

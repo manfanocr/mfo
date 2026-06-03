@@ -59,7 +59,7 @@ from mfo.core.plugins import (
     discover_plugins,
     resolve_factory,
 )
-from mfo.core.reading_order import order_regions, order_regions_by_panels
+from mfo.core.reading_order import order_regions, order_regions_by_panels, panel_of
 from mfo.core.traceability import selected_candidate, selected_text
 
 __all__ = [
@@ -73,6 +73,7 @@ __all__ = [
     # reading order
     "order_regions",
     "order_regions_by_panels",
+    "panel_of",
     # traceability
     "selected_candidate",
     "selected_text",

@@ -374,7 +374,7 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
   adapter-pluggable yet). `docs/PLUGINS.md` contributor guide + ARCHITECTURE/README pointers. See
   CHANGELOG.
 
-### Batch 8.4 — Panel-aware context (SG-1)
+### Batch 8.4 — Panel-aware context (SG-1) ✅ *(landed 2026-06-04)*
 - **Scope:** Use the landed panel detection (3.3) to scope the translation context window to the
   current panel — neighbor selection in `mfo.core.context.build_context` prefers same-panel units and
   records panel grouping in the context bundle, giving the `api`/AI path tighter, more relevant
@@ -382,6 +382,12 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
 - **Satisfies:** SG-1; FR-18, FR-22; §12.5.
 - **DoD:** On a multi-panel sample the context bundle reflects panel boundaries; an A/B shows context
   no longer bleeds across panels; offline adapters (which ignore context) are unaffected.
+- **Shipped:** `Region.panel_index` stamped by the panel-aware reading-order stage (`panel_of`
+  exposed from `mfo.core.reading_order`; cleared on the flat path); `build_context(..., panels=)`
+  scopes the neighbour window to a unit's panel and records its `panel` in the bundle (out-of-panel
+  units keep the plain window); `translate_units` derives each unit's panel from its lead region and
+  passes it through — flat projects keep a byte-identical bundle (no spurious re-translate). Offline
+  adapters ignore context, so they're unaffected (I-7). USER_GUIDE note. See CHANGELOG.
 
 ### Batch 8.5 — Cross-volume name & terminology memory (SG-2, SG-3)
 - **Scope:** A **series-level** shared glossary/terminology store (above the per-project glossary of
@@ -454,7 +460,7 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
 - [x] M5 Render & Export
 - [x] M6 Review Editor *(MVP complete — M0–M6 satisfy the DoD §21)*
 - [x] M7 AI Refinement *(7.1 assist adapter, 7.2 modes, 7.3 confidence-driven review)*
-- [ ] M8 Hardening & Stretch *(planned into batches 8.0–8.11; 8.0 fused detect+recognize, 8.1 parallel processing, 8.2 archive import, 8.3 plugin system landed)*
+- [ ] M8 Hardening & Stretch *(planned into batches 8.0–8.11; 8.0 fused detect+recognize, 8.1 parallel processing, 8.2 archive import, 8.3 plugin system, 8.4 panel-aware context landed)*
 
 When a batch lands: tick it, and append a dated entry to [CHANGELOG.md](CHANGELOG.md) with the
 spec IDs it satisfied.

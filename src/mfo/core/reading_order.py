@@ -78,11 +78,13 @@ def order_regions(
     return [items[i] for i in order]
 
 
-def _panel_of(box: BBox, panels: list[BBox]) -> int | None:
+def panel_of(box: BBox, panels: list[BBox]) -> int | None:
     """Index of the panel best containing ``box`` (by overlap area), or ``None`` if it sits outside.
 
     A region is assigned to whichever panel its area overlaps most; a region overlapping no panel
     (e.g. art-bleed SFX outside every frame) returns ``None`` so the caller can place it separately.
+    This is the seam the reading-order stage uses to stamp each region's panel (FR-18) and the
+    translation context uses to keep a unit's neighbour window inside its panel (SG-1).
     """
     best_index: int | None = None
     best_overlap = 0.0
@@ -120,7 +122,7 @@ def order_regions_by_panels(
     buckets: list[list[Region]] = [[] for _ in panel_boxes]
     outside: list[Region] = []
     for region in items:
-        index = _panel_of(region.bbox, panel_boxes)
+        index = panel_of(region.bbox, panel_boxes)
         (outside if index is None else buckets[index]).append(region)
 
     ordered: list[Region] = []

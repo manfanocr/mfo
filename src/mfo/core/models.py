@@ -92,6 +92,10 @@ class Region(MfoModel):
     polygon: list[Point] | None = None
     type: RegionType = RegionType.UNKNOWN
     reading_order_index: int | None = None
+    # Index of the panel/frame this region sits in, assigned by the panel-aware reading-order stage
+    # (FR-18); ``None`` on the flat path or for regions outside every panel. Lets the translation
+    # context window stay within a panel (SG-1) without merging units.
+    panel_index: int | None = None
     confidence: float | None = None
     status: RegionStatus = RegionStatus.AUTO
 

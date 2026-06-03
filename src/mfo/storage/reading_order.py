@@ -20,7 +20,7 @@ from pathlib import Path
 from mfo.core import Page, Region
 from mfo.core.enums import ReadingDirection
 from mfo.core.geometry import BBox
-from mfo.core.reading_order import order_regions, order_regions_by_panels
+from mfo.core.reading_order import order_regions, order_regions_by_panels, panel_of
 from mfo.storage.hashing import content_key
 from mfo.storage.project import ProjectStore
 
@@ -52,9 +52,10 @@ def assign_reading_order(
     """Assign each region a ``reading_order_index`` per page; returns the regions reordered.
 
     When ``detect_panels`` is supplied the order is refined panel-by-panel (FR-18): each page's
-    image is read (read-only, I-1) to recover its panels and regions are ordered within them. The
-    panel mode is folded into the signature so toggling it re-runs (NFR-8); with no detector the
-    behaviour is the flat, fully-offline heuristic.
+    image is read (read-only, I-1) to recover its panels, regions are ordered within them, and each
+    region is stamped with its ``panel_index`` so the translation context can stay inside the panel
+    (SG-1). The panel mode is folded into the signature so toggling it re-runs (NFR-8); with no
+    detector the behaviour is the flat, fully-offline heuristic and ``panel_index`` is cleared.
     """
     panel_mode = "panels" if detect_panels is not None else "flat"
     updated: list[Region] = []
@@ -74,16 +75,25 @@ def assign_reading_order(
             "direction": direction.value,
             "panels": detect_panels is not None,
         }
+        # Stamp each region's panel so the translation context can stay inside it (SG-1, FR-18).
+        # ``None`` on the flat path clears any stale panel from a previous panel-mode run.
+        panel_by_region: dict[str, int | None] = {region.id: None for region in regions}
         if detect_panels is not None:
             panels = list(detect_panels(store.layout.root / page.image_path))
             ordered = order_regions_by_panels(regions, panels, direction=direction)
             structure["panel_count"] = len(panels)
+            panel_by_region = {region.id: panel_of(region.bbox, panels) for region in regions}
         else:
             ordered = order_regions(regions, direction=direction)
         structure["count"] = len(ordered)
 
         for index, region in enumerate(ordered):
-            reordered = region.model_copy(update={"reading_order_index": index})
+            reordered = region.model_copy(
+                update={
+                    "reading_order_index": index,
+                    "panel_index": panel_by_region[region.id],
+                }
+            )
             store.db.save(reordered)
             updated.append(reordered)
         store.db.save(page.model_copy(update={"structure": structure}))

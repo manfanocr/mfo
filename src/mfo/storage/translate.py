@@ -63,6 +63,13 @@ def _order_key(unit: TranslationUnit, order_by_region: dict[str, float]) -> floa
     return math.inf
 
 
+def _unit_panel(unit: TranslationUnit, panel_by_region: dict[str, int | None]) -> int | None:
+    """The panel of a unit, taken from its lead (first reading-order) region (SG-1)."""
+    if unit.ordered_region_ids:
+        return panel_by_region.get(unit.ordered_region_ids[0])
+    return None
+
+
 def _assemble_source(unit: TranslationUnit, text_by_region: dict[str, str]) -> str:
     """Join the OCR text of a unit's regions, in reading order, into its source bundle."""
     parts = [text_by_region[rid] for rid in unit.ordered_region_ids if text_by_region.get(rid)]
@@ -165,6 +172,7 @@ def translate_units(
             )
             for region in regions
         }
+        panel_by_region = {region.id: region.panel_index for region in regions}
         text_by_region: dict[str, str] = {}
         for region in regions:
             spans = store.db.list(OCRSpan, where=("region_id", region.id))
@@ -173,10 +181,19 @@ def translate_units(
 
         units = sorted(units, key=lambda u: _order_key(u, order_by_region))
         sources = [_assemble_source(unit, text_by_region) for unit in units]
+        # Scope each unit's context to its panel when the page was ordered panel-aware (SG-1);
+        # with no panel data this is None and the context stays the plain reading-order window.
+        unit_panels = [_unit_panel(unit, panel_by_region) for unit in units]
+        panels = unit_panels if any(p is not None for p in unit_panels) else None
         contexts = [
             _with_glossary(
                 build_context(
-                    sources, index, page_index=page.index, page_count=page_count, window=window
+                    sources,
+                    index,
+                    page_index=page.index,
+                    page_count=page_count,
+                    window=window,
+                    panels=panels,
                 ),
                 sources[index],
                 glossary,
