@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+from mfo.render.composite import (
+    CompositeArtifact,
+    CompositeResult,
+    PlacedText,
+    Placement,
+    composite_file,
+    composite_page,
+)
 from mfo.render.mask import (
     MaskArtifact,
     MaskConfig,
@@ -46,4 +54,11 @@ __all__ = [
     "fit_text",
     "render_layout",
     "typeset",
+    # compositing
+    "Placement",
+    "PlacedText",
+    "CompositeResult",
+    "CompositeArtifact",
+    "composite_page",
+    "composite_file",
 ]

@@ -9,6 +9,39 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 5.3 — Composite & export pages** (M5 Rendering & Export):
+  - `mfo.render.composite`: a pure, storage-free compositor — the last render step. `composite_page` takes a
+    page (normally the masked layer) and a list of `Placement`s (translated string + box + style) and, for
+    each, typesets it with `fit_text` and pastes the tile using its own alpha as the mask, so glyphs blend
+    on and the transparent surround leaves the art untouched; the original image is never mutated (I-1) and
+    the same page + placements yield byte-identical output (NFR-26). It returns the finished page plus the
+    per-placement layouts, so the count of placements that overflowed their box stays visible (I-4).
+    `composite_file` reads a base page (read-only) and returns the composited PNG bytes for persistence.
+  - `mfo.storage.render`: `composite_pages` wires the (injected) compositor to persistence — for each page it
+    builds the placements (`page_placements`: each unit's *selected* translation over the union box of its
+    regions, styled by the leading region type → preset; user-selected text wins, I-3/FR-29), composites onto
+    the page's masked base (falling back to the original if masking hasn't run), writes
+    `renders/<page>.render.png`, and records a `RenderArtifact` (`kind="render"`) tracing the render to its
+    page (I-2). A per-page signature folds the base layer's signature and a placements fingerprint, so an
+    unchanged page skips (NFR-8) while a re-mask or re-translation invalidates the render; a recompute drops
+    the prior render first. `BBox.union` was added to combine a unit's region boxes.
+  - `mfo.storage.export`: `export_pages` bundles a portable export directory — the translated page images
+    (render → masked → original fallback so the whole volume is covered), the full source → OCR → translation
+    `mapping.json` (FR-43), a machine-readable `manifest.json`, and a human-readable `transcript.txt`. Output
+    is ordered by page index and otherwise deterministic (NFR-26).
+  - CLI: bare `mfo export` now composites the selected translations onto the masked pages and writes the
+    export bundle (pages + mapping + manifest + transcript), reporting any overflow; `--mapping` still emits
+    the mapping alone. A `composite` pipeline stage joins `mfo run` once both rendering (masking) and
+    translation are configured (it depends on both), and `mfo status` now reports masked vs composited pages
+    on separate lines.
+  - Tests: pure compositor (text painted into its box, base not mutated, overflow flagged, determinism,
+    `composite_file` PNG bytes + read-only base + byte stability); storage (`page_placements` builds one per
+    translated unit with the right preset/box, `composite_pages` writes a render traced to the page with the
+    original untouched, fallback to original without a mask, idempotent then invalidated by a changed
+    selection, `export_pages` bundles pages/mapping/manifest/transcript, original fallback when unrendered,
+    determinism); CLI (`mfo export` composites + writes the bundle, the composite stage joins the pipeline
+    only once render *and* translation are configured).
+  - Satisfies: FR-14, FR-34, FR-43, MVP-9; I-1, I-2, I-3, I-4; NFR-8, NFR-26; spec §7.6, §10.8, §21.
 - **Batch 5.2 — Font fitting & placement** (M5 Rendering & Export):
   - `mfo.render.typeset`: a pure, storage-free typesetting engine. `fit_text` finds the largest font size at
     which a translated string — greedily wrapped to the box width (`wrap_text`, hard-breaking any word too wide
@@ -393,11 +426,12 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   is off the MVP-critical path. M4 landed 4.1 (translation adapter + context builder), 4.2 (glossary,
   terminology & style), and 4.3 (traceability & mapping export, MVP-7) — completing M4's MVP scope. The
   optional **batch 4.4 — API translation adapter** (opt-in cloud/LLM translation behind explicit config,
-  never default) remains and is off the MVP-critical path. **M5 (Rendering & Export)** has landed 5.1 (text
-  masking / removal — the reversible masked base layer) and 5.2 (font fitting & placement — the pure
-  typesetting engine: bubble-aware fit/wrap/align with style presets and stroke/outline). Next up: **batch
-  5.3 — composite & export pages** (typeset the selected translation onto each masked layer and export the
-  translated pages + mapping; also where bare `mfo export` graduates from its placeholder).
+  never default) remains and is off the MVP-critical path. **M5 (Rendering & Export) is complete** — 5.1
+  (text masking / removal — the reversible masked base layer), 5.2 (font fitting & placement — the pure
+  typesetting engine), and 5.3 (composite & export pages — typesetting the selected translation onto each
+  masked layer and exporting translated pages + mapping/manifest/transcript, MVP-9). Next up: **M6 (Review
+  Editor)** — batch 6.1 (review backend/API) then 6.2 (local web editor UI) and 6.3 (in-place editing &
+  region ops); completing M6 satisfies the MVP Definition of Done (§21).
 
 <!--
 Template for a landed batch:

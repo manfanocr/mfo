@@ -20,7 +20,7 @@ from mfo.core import (
     TranslationCandidate,
     TranslationUnit,
 )
-from mfo.core.enums import CandidateKind, RegionStatus
+from mfo.core.enums import CandidateKind, RegionStatus, RegionType
 from mfo.core.geometry import BBox
 from mfo.storage import ProjectStore
 
@@ -478,12 +478,77 @@ def test_export_mapping_custom_out_dir(tmp_path: Path) -> None:
     assert (out_dir / "mapping.json").is_file()
 
 
-def test_export_without_mapping_is_placeholder(tmp_path: Path) -> None:
+def _seed_translated_page(store: ProjectStore) -> Page:
+    """A real page image on disk carrying one translated bubble unit (no optional deps needed)."""
+    image_rel = "pages/p0.png"
+    image_path = store.layout.root / image_rel
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (200, 120), "white").save(image_path)
+    page = Page(project_id=store.project.id, index=0, image_path=image_rel, width=200, height=120)
+    store.db.save(page)
+    region = Region(
+        page_id=page.id,
+        bbox=BBox(x=20, y=20, width=120, height=40),
+        reading_order_index=0,
+        type=RegionType.BUBBLE,
+    )
+    store.db.save(region)
+    store.db.save(OCRSpan(region_id=region.id, text="こんにちは", confidence=0.9))
+    candidate = TranslationCandidate(text="Hello there", kind=CandidateKind.RAW)
+    store.db.save(
+        TranslationUnit(
+            page_id=page.id,
+            ordered_region_ids=[region.id],
+            source_bundle="こんにちは",
+            candidates=[candidate],
+            selected_candidate_id=candidate.id,
+        )
+    )
+    return page
+
+
+def test_export_composites_pages_and_writes_bundle(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target), "--source", "ja", "--target", "en"])
+    with ProjectStore.open(target) as store:
+        _seed_translated_page(store)
+
+    result = runner.invoke(app, ["export", str(target)])
+    assert result.exit_code == 0, result.output
+    assert "Exported 1 page(s)" in result.output
+
+    exports = target / "exports"
+    assert (exports / "pages" / "0000.png").is_file()  # the translated page (MVP-9)
+    assert (exports / "mapping.json").is_file()  # the source→OCR→translation mapping (FR-43)
+    assert (exports / "manifest.json").is_file()
+    assert (exports / "transcript.txt").is_file()
+
+    manifest = json.loads((exports / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["pages"][0]["source"] == "render"  # composited (onto the original here)
+
+    with ProjectStore.open(target) as store:
+        renders = [a for a in store.db.list(RenderArtifact) if a.params["kind"] == "render"]
+        assert len(renders) == 1  # a render artifact was recorded and traced to the page (I-2)
+
+
+def test_run_includes_composite_stage_once_render_and_translate_configured(tmp_path: Path) -> None:
     target = tmp_path / "vol"
     runner.invoke(app, ["init", str(target)])
-    result = runner.invoke(app, ["export", str(target)])
-    assert result.exit_code == 0
-    assert "5.3" in result.output
+    source = tmp_path / "src"
+    source.mkdir()
+    _make_page_with_text(source / "p1.png")
+    runner.invoke(app, ["import", str(target), str(source)])
+    runner.invoke(app, ["detect", str(target)])
+
+    # Render alone is not enough — compositing also needs translation configured.
+    runner.invoke(app, ["render", str(target)])
+    with ProjectStore.open(target) as store:
+        assert "composite" not in build_pipeline(store).stage_names()
+
+    runner.invoke(app, ["ocr", str(target)])  # translation depends on OCR being configured
+    runner.invoke(app, ["translate", str(target)])
+    with ProjectStore.open(target) as store:
+        assert "composite" in build_pipeline(store).stage_names()
 
 
 def test_run_includes_translate_stage_once_ocr_configured(tmp_path: Path) -> None:

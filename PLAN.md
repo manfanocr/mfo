@@ -233,7 +233,7 @@ plugs into.
 - **Satisfies:** FR-34, FR-35, NFR-3; SG-6 groundwork; §10.8.
 - **DoD:** Text fits sample bubbles without overflow; presets applied; deterministic output.
 
-### Batch 5.3 — Composite & export pages
+### Batch 5.3 — Composite & export pages ✅ *(landed — see CHANGELOG)*
 - **Scope:** Render translated text onto (masked) page, export images + project records +
   optional transcript/manifest.
 - **Satisfies:** FR-14, FR-43, MVP-9, NFR-26; §7.6, §10.8.
@@ -305,7 +305,7 @@ plugs into.
 - [x] M2 Vision *(MVP scope: 2.1 detect, 2.3 OCR, 2.4 confidence; 2.2 ML detector is optional)*
 - [ ] M3 Structure
 - [ ] M4 Translation
-- [ ] M5 Render & Export
+- [x] M5 Render & Export
 - [ ] M6 Review Editor *(MVP complete)*
 - [ ] M7 AI Refinement
 - [ ] M8 Hardening & Stretch

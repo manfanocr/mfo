@@ -3,9 +3,9 @@
 Commands are deliberately thin: they resolve configuration and a project, then delegate to the
 core/storage/vision layers. ``init``, ``import``, ``preprocess``, ``detect``, ``order``, ``group``,
 ``ocr``, ``translate``, ``glossary`` (add/list/remove), ``flag``, ``render`` (mask/remove source
-text), ``status``, ``export --mapping`` (the source→OCR→translation JSON link graph), and ``run``
-(the pipeline orchestrator) are functional; page ``export`` and ``review`` arrive in later
-milestones (batches 5.3, 6.2).
+text), ``status``, ``export`` (composite translated pages + the source→OCR→translation JSON mapping,
+manifest, and transcript; ``--mapping`` for the mapping alone), and ``run`` (the pipeline
+orchestrator) are functional; ``review`` arrives in a later milestone (batch 6.2).
 """
 
 from __future__ import annotations
@@ -19,7 +19,9 @@ from mfo import __version__
 from mfo.cli.config import build_settings
 from mfo.cli.logging import configure_logging, get_logger
 from mfo.cli.stages import (
+    COMPOSITE_SIGNATURE,
     build_pipeline,
+    composite_page_file,
     load_glossary,
     save_detect_config,
     save_glossary,
@@ -51,11 +53,15 @@ from mfo.language import (
 )
 from mfo.render import MaskConfig, mask_file
 from mfo.storage import (
+    MASK_KIND,
+    RENDER_KIND,
     JsonStateStore,
     ProjectStore,
     assign_reading_order,
+    composite_pages,
     confidence_report,
     detect_regions,
+    export_pages,
     flag_low_confidence,
     group_into_units,
     import_pages,
@@ -469,6 +475,8 @@ def status(
         units = store.db.list(TranslationUnit)
         translated = sum(1 for unit in units if unit.selected_candidate_id is not None)
         renders = store.db.list(RenderArtifact)
+        masked = sum(1 for a in renders if a.params.get("kind") == MASK_KIND)
+        composited = sum(1 for a in renders if a.params.get("kind") == RENDER_KIND)
         report = confidence_report(store, threshold=threshold)
 
     typer.secho(f"{project.name}  ({project.id})", bold=True)
@@ -483,7 +491,8 @@ def status(
     typer.echo(_stage_line("group", len(units), "units"))
     typer.echo(_stage_line("ocr", len(ocr_spans), "spans"))
     typer.echo(_stage_line("translate", translated, "units"))
-    typer.echo(_stage_line("render", len(renders), "pages"))
+    typer.echo(_stage_line("render", masked, "pages"))
+    typer.echo(_stage_line("compose", composited, "pages"))
 
     if report.total:
         typer.echo("")
@@ -592,16 +601,28 @@ def export(
         ),
     ] = False,
 ) -> None:
-    """Export translated pages and the source→OCR→translation mapping (--mapping; FR-41/42/43)."""
+    """Export translated pages + the source→OCR→translation mapping (FR-43, MVP-9)."""
     with _open_store(path) as store:
+        out_dir = out if out is not None else store.layout.exports_dir
         if mapping:
-            out_dir = out if out is not None else store.layout.exports_dir
             out_dir.mkdir(parents=True, exist_ok=True)
             out_path = out_dir / "mapping.json"
             write_mapping(store, out_path)
             typer.secho(f"Wrote mapping to {out_path}", fg=typer.colors.GREEN)
             return
-    _not_yet("Page export", "5.3")
+        # Composite the selected translations onto the masked pages, then bundle the export.
+        composite_pages(store, composite=composite_page_file, signature=COMPOSITE_SIGNATURE)
+        result = export_pages(store, out_dir)
+
+    typer.secho(f"Exported {len(result.pages)} page(s) to {result.out_dir}", fg=typer.colors.GREEN)
+    typer.echo(f"  mapping:    {result.mapping_path}")
+    typer.echo(f"  manifest:   {result.manifest_path}")
+    typer.echo(f"  transcript: {result.transcript_path}")
+    if result.overflow:
+        typer.secho(
+            f"  {result.overflow} text placement(s) overflowed their box — review recommended.",
+            fg=typer.colors.YELLOW,
+        )
 
 
 @app.command()

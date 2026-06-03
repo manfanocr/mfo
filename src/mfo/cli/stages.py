@@ -24,10 +24,19 @@ from mfo.core.glossary import GlossaryEntry, entries_from_config, entries_to_con
 from mfo.core.grouping import DEFAULT_GAP_RATIO
 from mfo.core.pipeline import Pipeline, Stage
 from mfo.language import TranslationRequest, Translator, get_translator
-from mfo.render import MaskConfig, mask_file
+from mfo.render import (
+    CompositeArtifact,
+    MaskConfig,
+    Placement,
+    composite_file,
+    get_preset,
+    mask_file,
+)
 from mfo.storage import (
+    PagePlacement,
     ProjectStore,
     assign_reading_order,
+    composite_pages,
     detect_regions,
     group_into_units,
     import_pages,
@@ -57,6 +66,22 @@ GROUP_STAGE = "group"
 OCR_STAGE = "ocr"
 TRANSLATE_STAGE = "translate"
 RENDER_STAGE = "render"
+COMPOSITE_STAGE = "composite"
+
+COMPOSITE_SIGNATURE = "composite@1"
+
+
+def composite_page_file(base_path: Path, placements: list[PagePlacement]) -> CompositeArtifact:
+    """Adapter binding storage's placement data to the render compositor (composition root).
+
+    Resolves each placement's named style preset and typesets it onto the page, returning the
+    composited PNG bytes that the storage stage persists. Keeps storage free of any image/PIL
+    dependency (NFR-17) while the CLI wires the two layers together.
+    """
+    return composite_file(
+        base_path,
+        [Placement(text=p.text, box=p.bbox, preset=get_preset(p.preset)) for p in placements],
+    )
 
 
 class ImportStage:
@@ -244,8 +269,8 @@ class RenderStage:
     """Mask the source text on each page, producing a masked layer + mask (idempotent, offline).
 
     Masking depends only on the detected region geometry (not OCR/translation), so it joins right
-    after detection. Later batches extend this stage to typeset the translated text onto the
-    masked layer; for now it produces the reversible masked base (FR-31/32/33, I-1/I-6).
+    after detection and produces the reversible masked base (FR-31/32/33, I-1/I-6). The separate
+    :class:`CompositeStage` later typesets the translated text onto that masked layer.
     """
 
     name = RENDER_STAGE
@@ -263,6 +288,23 @@ class RenderStage:
             mask=lambda path, boxes: mask_file(path, boxes, self._config),
             signature=self._config.signature(),
         )
+
+
+class CompositeStage:
+    """Typeset the selected translations onto each masked page, producing the final render.
+
+    Compositing needs both the masked base (the render/mask stage) and the chosen translations
+    (the translate stage), so it depends on both and joins the pipeline once both are configured.
+    """
+
+    name = COMPOSITE_STAGE
+    deps: tuple[str, ...] = (RENDER_STAGE, TRANSLATE_STAGE)
+
+    def inputs_hash(self, ctx: ProjectStore) -> str:
+        return COMPOSITE_SIGNATURE
+
+    def run(self, ctx: ProjectStore) -> None:
+        composite_pages(ctx, composite=composite_page_file, signature=COMPOSITE_SIGNATURE)
 
 
 def save_import_config(
@@ -361,7 +403,8 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
     ``mfo ocr``. Translation (consuming both the OCR text and the groups) is likewise opt-in via
     ``mfo translate`` and only joins once OCR is configured, since it depends on it. Rendering
     (masking) needs only the detected regions, so it joins independently once configured via
-    ``mfo render``.
+    ``mfo render``. Compositing — typesetting the chosen translations onto the masked page — needs
+    both, so it joins last, once rendering and translation are both configured.
     """
     stages: list[Stage[ProjectStore]] = []
     config = store.project.config
@@ -414,5 +457,10 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
                         glossary=entries_from_config(config.get("glossary")),
                     )
                 )
+
+                # Compositing needs both the masked base and the translations, so it joins only
+                # once rendering (masking) has been configured alongside translation.
+                if render_config is not None:
+                    stages.append(CompositeStage())
 
     return Pipeline(stages)
