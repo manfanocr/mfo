@@ -33,7 +33,12 @@ from mfo.core import (
     TranslationUnit,
     selected_text,
 )
-from mfo.core.confidence import DEFAULT_THRESHOLD, aggregate_confidence, is_low_confidence
+from mfo.core.confidence import (
+    DEFAULT_THRESHOLD,
+    aggregate_confidence,
+    ai_candidate,
+    is_low_confidence,
+)
 from mfo.core.context import DEFAULT_NEIGHBOR_WINDOW, build_context
 from mfo.core.enums import CandidateKind, EditAction, RegionStatus, RegionType, TranslationStyle
 from mfo.core.geometry import BBox
@@ -82,8 +87,39 @@ def _ocr_payload(span: OCRSpan) -> dict[str, Any]:
     }
 
 
-def _region_payload(region: Region, spans: list[OCRSpan]) -> dict[str, Any]:
-    """One region with its OCR and aggregate confidence, for the page editor (§13.2)."""
+#: A region not covered by any AI suggestion: no AI flag, no confidence, no rationale.
+_NO_AI_FLAG: dict[str, Any] = {"ai_flagged": False, "ai_confidence": None, "ai_rationale": None}
+
+
+def _ai_flags_by_region(
+    units: list[TranslationUnit], *, threshold: float = DEFAULT_THRESHOLD
+) -> dict[str, dict[str, Any]]:
+    """Map each region to its unit's AI uncertainty signal, for confidence-driven review (FR-30).
+
+    For every unit the optional AI layer touched, its AI candidate's confidence and rationale are
+    attached to each region the unit covers; the region is *AI-flagged* when that confidence is low
+    (unknown or below ``threshold``), exactly as OCR confidence is judged (I-4). Regions whose unit
+    has no AI candidate simply don't appear here (callers fall back to :data:`_NO_AI_FLAG`).
+    """
+    flags: dict[str, dict[str, Any]] = {}
+    for unit in units:
+        candidate = ai_candidate(unit)
+        if candidate is None:
+            continue
+        info = {
+            "ai_flagged": is_low_confidence(candidate.confidence, threshold=threshold),
+            "ai_confidence": candidate.confidence,
+            "ai_rationale": candidate.rationale,
+        }
+        for region_id in unit.ordered_region_ids:
+            flags[region_id] = info
+    return flags
+
+
+def _region_payload(
+    region: Region, spans: list[OCRSpan], ai: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """One region with its OCR, aggregate confidence, and any AI uncertainty (§13.2, FR-30)."""
     confidence = aggregate_confidence(region, spans)
     return {
         "region_id": region.id,
@@ -94,6 +130,7 @@ def _region_payload(region: Region, spans: list[OCRSpan]) -> dict[str, Any]:
         "low_confidence": is_low_confidence(confidence),
         "bbox": _bbox_payload(region.bbox),
         "ocr": [_ocr_payload(span) for span in spans],
+        **(ai if ai is not None else _NO_AI_FLAG),
     }
 
 
@@ -178,19 +215,24 @@ def project_summary(store: ProjectStore, *, threshold: float = DEFAULT_THRESHOLD
     regions_by_page: dict[str, list[Region]] = {}
     for region in store.db.list(Region):
         regions_by_page.setdefault(region.page_id, []).append(region)
-    units_by_page: dict[str, int] = {}
+    units_by_page: dict[str, list[TranslationUnit]] = {}
     for unit in store.db.list(TranslationUnit):
-        units_by_page[unit.page_id] = units_by_page.get(unit.page_id, 0) + 1
+        units_by_page.setdefault(unit.page_id, []).append(unit)
 
     pages: list[dict[str, Any]] = []
     for page in store.db.list(Page, order_by="idx"):
         regions = regions_by_page.get(page.id, [])
+        units = units_by_page.get(page.id, [])
         low = sum(
             1
             for region in regions
             if is_low_confidence(
                 aggregate_confidence(region, spans.get(region.id, [])), threshold=threshold
             )
+        )
+        ai_flags = _ai_flags_by_region(units, threshold=threshold)
+        ai_flagged = sum(
+            1 for region in regions if ai_flags.get(region.id, _NO_AI_FLAG)["ai_flagged"]
         )
         pages.append(
             {
@@ -200,8 +242,9 @@ def project_summary(store: ProjectStore, *, threshold: float = DEFAULT_THRESHOLD
                 "width": page.width,
                 "height": page.height,
                 "regions": len(regions),
-                "units": units_by_page.get(page.id, 0),
+                "units": len(units),
                 "low_confidence": low,
+                "ai_flagged": ai_flagged,
             }
         )
 
@@ -233,13 +276,17 @@ def page_view(store: ProjectStore, page_id: str) -> dict[str, Any]:
     }
     ordered = sorted(regions, key=_order_key)
     units = store.db.list(TranslationUnit, where=("page_id", page.id))
+    ai_flags = _ai_flags_by_region(units)
     return {
         "page_id": page.id,
         "index": page.index,
         "image_path": page.image_path,
         "width": page.width,
         "height": page.height,
-        "regions": [_region_payload(region, spans.get(region.id, [])) for region in ordered],
+        "regions": [
+            _region_payload(region, spans.get(region.id, []), ai_flags.get(region.id))
+            for region in ordered
+        ],
         "units": [_unit_payload(store, unit) for unit in sorted(units, key=lambda u: u.id)],
     }
 
@@ -707,19 +754,25 @@ def retranslate_unit(
 
 
 def review_queue(store: ProjectStore, *, threshold: float = DEFAULT_THRESHOLD) -> dict[str, Any]:
-    """Order every region for review with low-confidence ones first (§13.4, I-4).
+    """Order regions for review, surfacing low-confidence and AI-flagged ones first (§13.4, I-4).
 
-    Within the low-confidence group (and the rest), regions stay in page then reading order, so the
-    editor can step a reviewer straight through the work that needs attention most.
+    A region needs attention when its OCR/detection confidence is low **or** the optional AI layer
+    flagged its unit as uncertain (FR-30, NFR-4); both bubble to the top, carrying the AI
+    candidate's confidence and rationale so a reviewer sees *why* it was flagged. Within each group
+    regions stay in page then reading order, so the editor can step straight through what matters.
     """
     spans = _spans_by_region(store)
     entries: list[dict[str, Any]] = []
     for page in store.db.list(Page, order_by="idx"):
+        ai_flags = _ai_flags_by_region(
+            store.db.list(TranslationUnit, where=("page_id", page.id)), threshold=threshold
+        )
         for region in _page_regions_in_order(store, page.id):
             # Auto-ignored panel/frame blobs aren't review work; keep them out of the queue.
             if region.status is RegionStatus.IGNORE:
                 continue
             confidence = aggregate_confidence(region, spans.get(region.id, []))
+            ai = ai_flags.get(region.id, _NO_AI_FLAG)
             entries.append(
                 {
                     "page_id": page.id,
@@ -729,11 +782,12 @@ def review_queue(store: ProjectStore, *, threshold: float = DEFAULT_THRESHOLD) -
                     "confidence": confidence,
                     "low_confidence": is_low_confidence(confidence, threshold=threshold),
                     "status": region.status.value,
+                    **ai,
                 }
             )
     entries.sort(
         key=lambda e: (
-            not e["low_confidence"],
+            not (e["low_confidence"] or e["ai_flagged"]),
             e["page_index"],
             e["reading_order_index"] if e["reading_order_index"] is not None else _ORDER_LAST,
         )

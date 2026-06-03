@@ -9,7 +9,15 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from mfo.core import OCRSpan, Page, Project, Region, TranslationUnit, selected_text
+from mfo.core import (
+    OCRSpan,
+    Page,
+    Project,
+    Region,
+    TranslationCandidate,
+    TranslationUnit,
+    selected_text,
+)
 from mfo.core.enums import CandidateKind, EditAction, RegionStatus, RegionType
 from mfo.core.geometry import BBox
 from mfo.storage import ProjectStore, import_pages, list_edits, translate_units
@@ -493,6 +501,94 @@ def test_review_queue_excludes_ignored_regions(tmp_path: Path) -> None:
 
         entries = review_queue(store)["entries"]
         assert [e["region_id"] for e in entries] == [a.id]
+
+
+# -- AI confidence integration (§12; FR-30, NFR-4, I-4; batch 7.3) ------------------------
+
+
+def _project_with_two_ai_units(root: Path, source: Path) -> ProjectStore:
+    """Two high-OCR-confidence regions, each its own unit, so AI flags alone drive the queue."""
+    source.mkdir()
+    arr = np.full((120, 120, 3), 255, dtype=np.uint8)
+    Image.fromarray(arr, mode="RGB").save(source / "p1.png")
+
+    store = ProjectStore.create(root, Project(name="vol", source_lang="ja", target_lang="en"))
+    import_pages(store, discover_images(source).images)
+    page = store.db.list(Page)[0]
+    for idx in (0, 1):
+        region = Region(
+            page_id=page.id,
+            bbox=BBox(x=10, y=10 + idx * 50, width=40, height=20),
+            reading_order_index=idx,
+            type=RegionType.BUBBLE,
+            confidence=0.9,  # high OCR/detection confidence everywhere
+        )
+        store.db.save(region)
+        store.db.save(OCRSpan(region_id=region.id, text=f"R{idx}", confidence=0.9))
+        store.db.save(TranslationUnit(page_id=page.id, ordered_region_ids=[region.id]))
+    return store
+
+
+def _attach_ai(store: ProjectStore, region_id: str, *, confidence: float, rationale: str) -> None:
+    """Append an AI candidate to the unit covering ``region_id`` (mimics the assist stage)."""
+    unit = next(u for u in store.db.list(TranslationUnit) if region_id in u.ordered_region_ids)
+    candidate = TranslationCandidate(
+        text="AI text", kind=CandidateKind.AI, confidence=confidence, rationale=rationale
+    )
+    store.db.save(unit.model_copy(update={"candidates": [*unit.candidates, candidate]}))
+
+
+def test_review_queue_surfaces_ai_flagged_regions_with_rationale(tmp_path: Path) -> None:
+    # A high-OCR-confidence region whose AI suggestion is uncertain still bubbles to the top, and
+    # carries the AI's rationale so the reviewer sees why (FR-30, I-4).
+    with _project_with_two_ai_units(tmp_path / "proj", tmp_path / "src") as store:
+        a, b = _regions_in_order(store)
+        _attach_ai(store, b.id, confidence=0.2, rationale="Ambiguous subject.")
+
+        entries = review_queue(store)["entries"]
+        assert entries[0]["region_id"] == b.id  # AI-flagged → first, despite high OCR confidence
+        assert entries[0]["low_confidence"] is False
+        assert entries[0]["ai_flagged"] is True
+        assert entries[0]["ai_confidence"] == 0.2
+        assert entries[0]["ai_rationale"] == "Ambiguous subject."
+        assert entries[1]["region_id"] == a.id
+        assert entries[1]["ai_flagged"] is False
+        assert entries[1]["ai_rationale"] is None
+
+
+def test_high_confidence_ai_candidate_is_not_flagged(tmp_path: Path) -> None:
+    # A confident AI suggestion is not review work — it neither flags the region nor reorders it.
+    with _project_with_two_ai_units(tmp_path / "proj", tmp_path / "src") as store:
+        a, _ = _regions_in_order(store)
+        _attach_ai(store, a.id, confidence=0.95, rationale="Clear.")
+
+        entries = review_queue(store)["entries"]
+        flagged = {e["region_id"] for e in entries if e["ai_flagged"]}
+        assert flagged == set()
+        assert entries[0]["region_id"] == a.id  # reading order preserved; nothing bubbled up
+
+
+def test_project_summary_counts_ai_flagged_regions(tmp_path: Path) -> None:
+    with _project_with_two_ai_units(tmp_path / "proj", tmp_path / "src") as store:
+        a, b = _regions_in_order(store)
+        _attach_ai(store, a.id, confidence=0.1, rationale="Low.")
+        _attach_ai(store, b.id, confidence=0.95, rationale="High.")
+
+        page = project_summary(store)["pages"][0]
+        assert page["low_confidence"] == 0  # OCR/detection confidence is high
+        assert page["ai_flagged"] == 1  # only the low-confidence AI suggestion
+
+
+def test_page_view_region_carries_ai_flag(tmp_path: Path) -> None:
+    with _project_with_two_ai_units(tmp_path / "proj", tmp_path / "src") as store:
+        a, b = _regions_in_order(store)
+        _attach_ai(store, b.id, confidence=0.2, rationale="Check speaker.")
+
+        regions = {r["region_id"]: r for r in page_view(store, b.page_id)["regions"]}
+        assert regions[b.id]["ai_flagged"] is True
+        assert regions[b.id]["ai_rationale"] == "Check speaker."
+        assert regions[a.id]["ai_flagged"] is False
+        assert regions[a.id]["ai_confidence"] is None
 
 
 # -- re-render preview (§13.3) ------------------------------------------------------------

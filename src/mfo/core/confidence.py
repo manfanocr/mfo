@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from mfo.core.models import OCRSpan, Region
+from mfo.core.enums import CandidateKind
+from mfo.core.models import OCRSpan, Region, TranslationCandidate, TranslationUnit
 
 # Regions scoring below this are surfaced for review by default. Tunable per invocation.
 DEFAULT_THRESHOLD = 0.5
@@ -35,3 +36,17 @@ def aggregate_confidence(region: Region, spans: Iterable[OCRSpan]) -> float | No
 def is_low_confidence(value: float | None, *, threshold: float = DEFAULT_THRESHOLD) -> bool:
     """Whether a score warrants review: unknown or strictly below ``threshold`` (I-4)."""
     return value is None or value < threshold
+
+
+def ai_candidate(unit: TranslationUnit) -> TranslationCandidate | None:
+    """The unit's AI suggestion, if the optional AI layer produced one (else ``None``).
+
+    The assist stage attaches at most one ``AI`` candidate per unit (replaced wholesale on each
+    run), so this returns it directly. Lets the review layer treat AI uncertainty the same way it
+    treats OCR/detection uncertainty — surfaced, never hidden (I-4) — without the core path needing
+    the AI layer at all (I-7).
+    """
+    for candidate in unit.candidates:
+        if candidate.kind is CandidateKind.AI:
+            return candidate
+    return None

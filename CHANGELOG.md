@@ -10,6 +10,20 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 
 ### M7 — AI-Assisted Refinement
 
+#### Added — Batch 7.3: Confidence-driven review integration (2026-06-03)
+- **AI uncertainty wired into the review queue and flags** (`mfo.core.confidence.ai_candidate`;
+  `mfo.ui.review`): the optional AI layer's per-unit confidence and rationale now drive review just
+  like OCR/detection confidence does (I-4). `review_queue` flags a region when its unit's `ai`
+  candidate is low-confidence (unknown or below the queue threshold) and sorts AI-flagged regions to
+  the top **beside** low-confidence ones — so a unit with confident OCR but an uncertain translation
+  still surfaces — each entry carrying `ai_flagged`/`ai_confidence`/`ai_rationale`. `project_summary`
+  gains a per-page `ai_flagged` count and `page_view` region payloads carry the same AI fields.
+  The bundled editor surfaces it: an **AI** badge + rationale tooltip on flagged queue rows, a violet
+  ring on flagged regions, the AI rationale (reasoning, ambiguity warnings, speaker-shift hints) on
+  the candidate card, and an AI-flagged total in the status line. Entirely off the core path — a unit
+  with no AI candidate is never flagged, so projects that never run `mfo assist` are unaffected (I-7).
+  (FR-30, NFR-4; I-4)
+
 #### Added — Batch 7.2: AI modes (2026-06-03)
 - **AI application stage + three modes** (`mfo.storage.assist`, `AssistMode`, `mfo assist`): runs the
   7.1 assistant over a project's translated units and persists structured suggestions as candidates,

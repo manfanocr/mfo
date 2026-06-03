@@ -324,7 +324,11 @@ def test_get_review_queue(client: tuple[TestClient, ProjectStore]) -> None:
     api, _ = client
     response = api.get("/api/review-queue")
     assert response.status_code == 200
-    assert len(response.json()["entries"]) == 1
+    entries = response.json()["entries"]
+    assert len(entries) == 1
+    # AI uncertainty fields ride on every entry (absent AI layer → not flagged) (FR-30).
+    assert entries[0]["ai_flagged"] is False
+    assert entries[0]["ai_rationale"] is None
 
 
 def test_render_endpoints(client: tuple[TestClient, ProjectStore]) -> None:

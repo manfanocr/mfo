@@ -101,7 +101,9 @@ async function loadProject() {
   renderPageList();
 
   const lowTotal = data.pages.reduce((n, pg) => n + pg.low_confidence, 0);
-  status(`${data.pages.length} page(s), ${lowTotal} low-confidence region(s).`);
+  const aiTotal = data.pages.reduce((n, pg) => n + (pg.ai_flagged || 0), 0);
+  const aiNote = aiTotal ? `, ${aiTotal} AI-flagged` : "";
+  status(`${data.pages.length} page(s), ${lowTotal} low-confidence region(s)${aiNote}.`);
   if (data.pages.length) {
     // Reopen on the page the user last viewed (per project), falling back to the first.
     const lastId = readLastPage();
@@ -219,6 +221,7 @@ function drawRegions() {
       class:
         `region-box status-${region.status}` +
         (region.low_confidence ? " low" : "") +
+        (region.ai_flagged ? " ai" : "") +
         (state.marked.has(region.region_id) ? " marked" : ""),
       "data-idx": String(i),
     });
@@ -408,6 +411,9 @@ function candidatesSection(unit) {
         el("span", { class: "muted", text: pct(c.confidence) }),
       ]),
       el("div", { text: c.text || "—" }),
+      // The AI layer's rationale folds in its reasoning, ambiguity warnings, and speaker-shift
+      // hints — keep that uncertainty visible to the reviewer (I-4, FR-30).
+      c.rationale ? el("div", { class: "cand-rationale muted", text: c.rationale }) : null,
     ]);
     if (!selected) card.addEventListener("click", () => selectCandidate(unit.unit_id, c.id));
     return card;
@@ -726,12 +732,17 @@ function renderQueue() {
     return;
   }
   entries.forEach((entry, i) => {
-    const row = el("div", { class: `queue-row${entry.low_confidence ? " low" : ""}`, "data-i": String(i) }, [
+    const cls = `queue-row${entry.low_confidence ? " low" : ""}${entry.ai_flagged ? " ai" : ""}`;
+    const row = el("div", { class: cls, "data-i": String(i) }, [
       el("span", { class: "dot" }),
       el("span", { class: "page-idx", text: `p${entry.page_index + 1}` }),
       el("span", { class: "muted", text: pct(entry.confidence) }),
+      // An AI badge marks units the optional AI layer flagged as uncertain; its rationale (the
+      // reasoning/warnings) rides along as the row tooltip so the reviewer sees why (FR-30, I-4).
+      entry.ai_flagged ? el("span", { class: "ai-badge", text: "AI", title: entry.ai_rationale || "AI-flagged" }) : null,
       el("span", { class: "muted", text: entry.status }),
     ]);
+    if (entry.ai_rationale) row.title = entry.ai_rationale;
     if (cur && entry.region_id === cur.region_id) row.classList.add("active");
     row.addEventListener("click", () => gotoQueueEntry(i));
     list.append(row);

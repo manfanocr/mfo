@@ -143,6 +143,13 @@ review editor's history), so it stays inspectable and reversible (I-3). Re-runni
 idempotent; pass `--force` to re-run, and use `mfo review` to compare the AI candidate, literal,
 readability, and your own text side by side.
 
+**Uncertainty surfaces in the review queue.** A unit whose AI suggestion is low-confidence is
+flagged for review just like low-confidence OCR — its region rises to the top of the queue (with an
+**AI** badge) even when the OCR itself was confident, and the AI's rationale (its reasoning,
+ambiguity warnings, and speaker-shift hints) shows on the queue row and the candidate card, so you
+always see *why* it was flagged (FR-30, I-4). The flag threshold matches the review queue's
+confidence threshold.
+
 ---
 
 ## OCR engines (`mfo ocr --engine …`)

@@ -285,23 +285,127 @@ plugs into.
   (`--mode/--assistant/--min-confidence/--style`, off the default `run`); `save_assist_config`;
   USER_GUIDE section. See CHANGELOG.
 
-### Batch 7.3 — Confidence-driven review integration
+### Batch 7.3 — Confidence-driven review integration ✅ *(landed 2026-06-03)*
 - **Scope:** Wire AI confidence + uncertainty into the M6 review queue and flags.
 - **Satisfies:** I-4, FR-30, NFR-4.
 - **DoD:** AI-flagged regions appear in the review queue with rationale.
+- **Shipped:** `mfo.core.confidence.ai_candidate`; the review backend now folds AI uncertainty into
+  `review_queue` (AI-flagged regions sort up beside low-confidence ones, carrying the AI candidate's
+  confidence + rationale), `project_summary` (per-page `ai_flagged` count), and `page_view` region
+  payloads (`ai_flagged`/`ai_confidence`/`ai_rationale`). Editor surfaces it: an **AI** badge +
+  rationale tooltip on queue rows, a violet ring on flagged regions, and the rationale on the
+  candidate card. Off the core path — no AI candidate means no flag (I-7). See CHANGELOG.
 
 ---
 
-## M8 — Hardening & Stretch
+## M8 — Hardening & Stretch (post-MVP)
 
-- **Perf & parallelism** (NFR-5/6/7/8): parallel page processing, profiling, cache tuning.
-- **Plugin hooks** (NFR-19, SG-9): formal extension points for detectors/OCR/translators/heuristics.
-- **Archive formats** (NG-4 relaxation): CBZ/ZIP import.
-- **Stretch goals** (SG-1…SG-10): panel-aware context, character-name memory across volumes,
-  shared terminology DB, per-series style presets, SFX transliteration, OCR correction via LLM,
-  collaborative review, web review over LAN.
-- **Packaging & docs**: installable distributions, model-download tooling, user guide, sample
-  data set.
+Everything here is **post-MVP and optional**. Unlike M0–M6 (a strict sequence) these batches are
+largely **independent and à la carte** — pick whichever delivers value next; only the few
+dependencies noted below force an order. Each still ships its own tests and leaves `main` green.
+The first three are *hardening* (NFR-driven); the rest realize the spec's stretch goals (SG-1…SG-10,
+§17). Each builds on a seam that already exists, so none is a rewrite.
+
+**Suggested order & dependencies:** 8.1–8.3 (hardening, independent, low-risk) → 8.3 *before* the
+adapter-adding stretch batches (8.7, 8.9) so new providers register through one mechanism → 8.4
+needs panel detection (3.3, landed) → 8.5 *before* 8.6 (presets bundle a shared glossary) → 8.8
+needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B4, landed) → 8.11 last.
+
+### Batch 8.1 — Parallel processing & performance tuning
+- **Scope:** Process pages concurrently across the heavy stages (detect/OCR/translate/render) with a
+  configurable worker count (`--jobs`); a small profiling/benchmark harness; cache-key audit so
+  parallelism never corrupts or races the per-input cache. Keep determinism (stable IDs, ordered
+  output) regardless of worker count.
+- **Satisfies:** NFR-5, NFR-6, NFR-7, NFR-8; §20.
+- **DoD:** A multi-page volume processes pages in parallel with a measurable speedup; results are
+  byte-identical to the serial run; cache still skips unchanged pages. Benchmark documented.
+
+### Batch 8.2 — Archive import (CBZ/ZIP)
+- **Scope:** Extend the import adapter (`mfo.vision.ingest` / `mfo import`) to read `.cbz`/`.zip`
+  (and plain folders, as today). Pages are extracted **read-only** into the project cache (originals
+  untouched, I-1), ordered by the same natural-sort strategy. CBR/RAR noted as out of scope (needs a
+  non-free dependency).
+- **Satisfies:** FR-1, FR-2, I-1, NFR-9; relaxes NG-4.
+- **DoD:** `mfo import proj vol.cbz` builds an ordered project; corrupt entries skipped with a clear
+  warning; source archive never modified.
+
+### Batch 8.3 — Formal plugin system (entry-point discovery)
+- **Scope:** Promote the per-layer `_FACTORIES` registries (detect/OCR/translate/assist/render) to a
+  documented extension API discoverable via Python **entry points** (`mfo.detectors`, `mfo.ocr`,
+  `mfo.translators`, `mfo.assistants`, `mfo.renderers`), so a third-party package registers an
+  adapter without editing mfo. `get_*` resolvers consult built-ins then entry points. A contributor
+  doc (`docs/PLUGINS.md`) is the "marketplace" groundwork (a curated index is just a list of these).
+- **Satisfies:** NFR-17, NFR-19, SG-9; §14.3.
+- **DoD:** A sample out-of-tree package registers a detector via entry points and `mfo detect
+  --detector <it>` finds and runs it; offline built-ins still resolve with no plugins installed.
+
+### Batch 8.4 — Panel-aware context (SG-1)
+- **Scope:** Use the landed panel detection (3.3) to scope the translation context window to the
+  current panel — neighbor selection in `mfo.core.context.build_context` prefers same-panel units and
+  records panel grouping in the context bundle, giving the `api`/AI path tighter, more relevant
+  context without merging units (one bubble = one unit stays).
+- **Satisfies:** SG-1; FR-18, FR-22; §12.5.
+- **DoD:** On a multi-panel sample the context bundle reflects panel boundaries; an A/B shows context
+  no longer bleeds across panels; offline adapters (which ignore context) are unaffected.
+
+### Batch 8.5 — Cross-volume name & terminology memory (SG-2, SG-3)
+- **Scope:** A **series-level** shared glossary/terminology store (above the per-project glossary of
+  4.2) that persists character names, honorifics, and pinned terms across volumes, with
+  export/import for team sharing. New units consult project → series glossary; the review editor can
+  promote a project term to the series store.
+- **Satisfies:** SG-2, SG-3; FR-23, FR-24, FR-25; I-2.
+- **DoD:** A name fixed in volume 1 is enforced in volume 2 via the shared store; the store
+  exports/imports losslessly (round-trip test); precedence (project overrides series) is tested.
+
+### Batch 8.6 — Per-series style presets (SG-4)
+- **Scope:** Named, series-scoped presets bundling translation style (4.2), the shared glossary
+  (8.5), and render presets (5.2), selectable when creating/configuring a project. *(Depends on 8.5
+  for the glossary half.)*
+- **Satisfies:** SG-4; FR-25, FR-35; §12.5.
+- **DoD:** Applying a series preset to a new project sets its style, glossary, and render config in
+  one step; presets persist and are listed by name.
+
+### Batch 8.7 — SFX detection & transliteration (SG-5)
+- **Scope:** Classify SFX regions (the `RegionType.SFX` already exists) and handle them distinctly
+  from dialogue: an optional transliteration/translation path producing an SFX-specific candidate, a
+  per-project toggle to render, transliterate, or leave SFX untouched. A new detector/classifier
+  adapter registers via 8.3.
+- **Satisfies:** SG-5; FR-11, FR-14; NFR-17.
+- **DoD:** SFX regions are typed and get a transliteration candidate; the render toggle is honored on
+  a sample; dialogue handling is unchanged.
+
+### Batch 8.8 — Bubble-shape-aware text wrapping (SG-6)
+- **Scope:** When a region carries a polygon (the `Region.polygon` field exists), wrap and fit text
+  to the **bubble shape** rather than its bounding box in the render font-fitter (5.2), reducing
+  text that visually spills outside round/irregular bubbles.
+- **Satisfies:** SG-6; FR-34, FR-35, NFR-3.
+- **DoD:** Text fits inside a non-rectangular polygon sample without crossing the bubble outline;
+  rectangular regions render identically to today (no regression).
+
+### Batch 8.9 — LLM OCR correction (SG-7)
+- **Scope:** An **opt-in** assist path (built on the M7 AI layer) that proposes corrections for
+  low-confidence OCR, surfaced as `OCRSpan.alternatives` / review suggestions — never overwriting the
+  recognized text (I-3). Off the core path; text-only, no page image (NFR-25).
+- **Satisfies:** SG-7; FR-12, FR-13, FR-30; I-3, I-7.
+- **DoD:** A low-confidence span gets LLM-suggested alternatives visible in review and acceptable
+  with one click; disabled by default; offline OCR unaffected.
+
+### Batch 8.10 — LAN & collaborative review (SG-8, SG-10)
+- **Scope:** Serve the review editor on the local network (`mfo review --host`, optional token auth)
+  and make concurrent review safe: per-user edit attribution (the `EditRecord.editor` and history
+  from M6/B4 are the basis), optimistic-concurrency / conflict detection on mutations, and basic
+  assignment (claim a page/queue range). Stays local-network, private-by-default (NFR-23/24).
+- **Satisfies:** SG-8, SG-10; FR-37, FR-42, FR-49; NFR-16, NFR-23.
+- **DoD:** Two browsers on the LAN edit one project; edits are attributed per user; a stale write is
+  rejected with a clear conflict rather than silently lost.
+
+### Batch 8.11 — Packaging, model tooling & sample data
+- **Scope:** Installable distributions (pipx/wheels), a `mfo models` command to download & cache the
+  optional models (OCR/detector/translation) with `MFO_MODEL_DIR`, a small bundled **sample dataset**
+  and an end-to-end smoke run, and a finalized user guide/README pass.
+- **Satisfies:** NFR-12, NFR-22, NFR-28; §15, §21.
+- **DoD:** A clean machine can `pipx install mfo`, `mfo models pull <name>`, and run the sample
+  project end-to-end (import → export) following only the docs.
 
 ---
 
@@ -314,8 +418,8 @@ plugs into.
 - [x] M4 Translation *(MVP scope: 4.1 adapter+context, 4.2 glossary/style, 4.3 mapping; 4.4 optional API adapter landed)*
 - [x] M5 Render & Export
 - [x] M6 Review Editor *(MVP complete — M0–M6 satisfy the DoD §21)*
-- [ ] M7 AI Refinement
-- [ ] M8 Hardening & Stretch
+- [x] M7 AI Refinement *(7.1 assist adapter, 7.2 modes, 7.3 confidence-driven review)*
+- [ ] M8 Hardening & Stretch *(planned into batches 8.1–8.11; none started)*
 
 When a batch lands: tick it, and append a dated entry to [CHANGELOG.md](CHANGELOG.md) with the
 spec IDs it satisfied.

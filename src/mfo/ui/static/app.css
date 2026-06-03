@@ -13,6 +13,7 @@
   --region-low: #e8a13a;
   --bad: #d23b3b;
   --good: #2e9e5b;
+  --ai: #8b5cf6;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }
 
@@ -29,6 +30,7 @@
   --region-low: #f0b54a;
   --bad: #ff6b6b;
   --good: #4cc77f;
+  --ai: #a78bfa;
   --shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
 }
 
@@ -243,6 +245,12 @@ h2 {
 .region-box.low {
   border-color: var(--region-low);
   background: rgba(240, 181, 74, 0.14);
+}
+
+/* AI-flagged: a violet ring so the optional AI layer's uncertainty is visible on the page (FR-30,
+   I-4), layered over (not replacing) the low-confidence/status tint. */
+.region-box.ai {
+  box-shadow: 0 0 0 2px var(--ai);
 }
 
 .region-box.selected {
@@ -583,6 +591,15 @@ h2 {
   border-color: var(--accent);
 }
 
+/* The AI candidate's rationale: its reasoning, ambiguity warnings, and speaker-shift hints. */
+.cand-rationale {
+  margin-top: 4px;
+  font-size: 11px;
+  font-style: italic;
+  border-left: 2px solid var(--ai);
+  padding-left: 6px;
+}
+
 /* -- review queue ------------------------------------------------------------- */
 
 #queue-panel {
@@ -622,6 +639,21 @@ h2 {
 
 .queue-row.low .dot {
   background: var(--region-low);
+}
+
+/* A unit the AI flagged as uncertain (it may be high OCR confidence yet still need a look). */
+.queue-row.ai .dot {
+  background: var(--ai);
+}
+
+.ai-badge {
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--ai);
+  color: #fff;
+  padding: 0 5px;
+  border-radius: 4px;
+  flex: none;
 }
 
 /* -- history panel ------------------------------------------------------------ */
