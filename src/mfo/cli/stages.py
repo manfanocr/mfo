@@ -24,12 +24,14 @@ from mfo.core.glossary import GlossaryEntry, entries_from_config, entries_to_con
 from mfo.core.grouping import DEFAULT_GAP_RATIO
 from mfo.core.pipeline import Pipeline, Stage
 from mfo.language import TranslationRequest, Translator, get_translator
+from mfo.render import MaskConfig, mask_file
 from mfo.storage import (
     ProjectStore,
     assign_reading_order,
     detect_regions,
     group_into_units,
     import_pages,
+    mask_pages,
     ocr_regions,
     preprocess_pages,
     translate_units,
@@ -54,6 +56,7 @@ STRUCTURE_STAGE = "structure"
 GROUP_STAGE = "group"
 OCR_STAGE = "ocr"
 TRANSLATE_STAGE = "translate"
+RENDER_STAGE = "render"
 
 
 class ImportStage:
@@ -237,6 +240,31 @@ class TranslateStage:
         )
 
 
+class RenderStage:
+    """Mask the source text on each page, producing a masked layer + mask (idempotent, offline).
+
+    Masking depends only on the detected region geometry (not OCR/translation), so it joins right
+    after detection. Later batches extend this stage to typeset the translated text onto the
+    masked layer; for now it produces the reversible masked base (FR-31/32/33, I-1/I-6).
+    """
+
+    name = RENDER_STAGE
+    deps: tuple[str, ...] = (DETECT_STAGE,)
+
+    def __init__(self, config: MaskConfig) -> None:
+        self._config = config
+
+    def inputs_hash(self, ctx: ProjectStore) -> str:
+        return self._config.signature()
+
+    def run(self, ctx: ProjectStore) -> None:
+        mask_pages(
+            ctx,
+            mask=lambda path, boxes: mask_file(path, boxes, self._config),
+            signature=self._config.signature(),
+        )
+
+
 def save_import_config(
     store: ProjectStore,
     *,
@@ -303,6 +331,13 @@ def save_translate_config(
     store.set_project(store.project.model_copy(update={"config": project_config}))
 
 
+def save_render_config(store: ProjectStore, config: MaskConfig) -> None:
+    """Persist the masking knobs so ``mfo run`` reproduces the same masked layers (FR-48)."""
+    project_config = dict(store.project.config)
+    project_config["render"] = {"pad": config.pad, "border": config.border}
+    store.set_project(store.project.model_copy(update={"config": project_config}))
+
+
 def load_glossary(store: ProjectStore) -> tuple[GlossaryEntry, ...]:
     """Read the project glossary from its persisted config (FR-24)."""
     return entries_from_config(store.project.config.get("glossary"))
@@ -324,8 +359,9 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
     geometry-only so they stay on the offline path. OCR is opt-in: its default engine (manga-ocr) is
     an optional install, so the OCR stage joins the pipeline only once an engine has been chosen via
     ``mfo ocr``. Translation (consuming both the OCR text and the groups) is likewise opt-in via
-    ``mfo translate`` and only joins once OCR is configured, since it depends on it. Later
-    milestones register render here.
+    ``mfo translate`` and only joins once OCR is configured, since it depends on it. Rendering
+    (masking) needs only the detected regions, so it joins independently once configured via
+    ``mfo render``.
     """
     stages: list[Stage[ProjectStore]] = []
     config = store.project.config
@@ -353,6 +389,11 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
 
         group_config = config.get("group") or {}
         stages.append(GroupStage(group_config.get("max_gap_ratio", DEFAULT_GAP_RATIO)))
+
+        # Rendering (masking) only needs the detected regions, so it joins independently of OCR.
+        render_config = config.get("render")
+        if render_config is not None:
+            stages.append(RenderStage(MaskConfig(**render_config)))
 
         ocr_config = config.get("ocr")
         if ocr_config is not None:

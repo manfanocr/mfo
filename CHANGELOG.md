@@ -9,6 +9,31 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 5.1 — Text masking / removal** (M5 Rendering & Export):
+  - `mfo.render.mask`: a pure, storage-free imaging module that removes source text from a page. Given the
+    page and its detected region boxes it produces a **masked** layer — each box filled with its estimated
+    local background colour (`estimate_background` takes the median of a ring sampled *outside* the box) so
+    coloured/screentoned bubbles are reconstructed rather than punched white (FR-31/32) — and a 1-channel
+    **mask** layer recording exactly which pixels changed. Masking is strictly confined to the region boxes,
+    so line art and texture outside them stay byte-identical (FR-33). `restore` reverses a masking from the
+    masked + mask layers (I-6); the source image is opened read-only and never mutated (I-1). Output is
+    deterministic (NFR-26).
+  - `mfo.storage.render`: `mask_pages` orchestrates persistence — reads each page's original (read-only),
+    writes `renders/<page>.masked.png` + `renders/<page>.mask.png`, and records a `RenderArtifact`
+    (`kind="mask"`) linking the masked layer back to its page (I-2). The imaging callable is injected so
+    storage stays image-free. A per-page signature folds the source image, mask config, and a region
+    fingerprint, so unchanged pages skip (NFR-8) and a re-detection invalidates the mask; a recompute drops
+    the prior artifact and its files first (idempotent). Region-less pages still get a masked base.
+  - CLI: `mfo render` masks every page into the reversible masked layer (offline; `--pad`/`--border`/`--force`)
+    and persists its config so `mfo run` reproduces it; the render stage joins the pipeline once configured,
+    depending only on detected regions (independent of OCR/translation). `mfo status` now lights the render
+    line.
+  - Tests: pure masking (text removed within region, line art outside preserved byte-for-byte, background
+    reconstruction uses the local colour, ring-median estimate, `restore` recovers the original exactly,
+    empty-regions no-op, determinism); storage stage (writes masked+mask PNGs traced to page, original
+    untouched, region-less page copied, idempotent-then-forced, re-detection invalidation); CLI (`render`
+    masks + status reports, render joins the pipeline once configured).
+  - Satisfies: FR-31, FR-32, FR-33, I-1, I-6; NFR-8, NFR-26; spec §10.8, §21.
 - **Batch 4.3 — Traceability & mapping export** (M4 Translation):
   - `mfo.core.traceability`: pure helpers resolving a unit's *selected* translation — `selected_candidate`
     returns the candidate the unit currently points at (or `None`), `selected_text` the text that would be
@@ -346,8 +371,10 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   is off the MVP-critical path. M4 landed 4.1 (translation adapter + context builder), 4.2 (glossary,
   terminology & style), and 4.3 (traceability & mapping export, MVP-7) — completing M4's MVP scope. The
   optional **batch 4.4 — API translation adapter** (opt-in cloud/LLM translation behind explicit config,
-  never default) remains and is off the MVP-critical path. Next up: **M5 (Rendering & Export)**, starting
-  with **batch 5.1 — text masking / removal**.
+  never default) remains and is off the MVP-critical path. **M5 (Rendering & Export)** has started with
+  5.1 (text masking / removal): the reversible masked base layer is in place. Next up: **batch 5.2 — font
+  fitting & placement** (wrap/scale/align translated text within each bbox, font selection, stroke/outline,
+  style presets), then 5.3 (typeset onto the masked layer + page export).
 
 <!--
 Template for a landed batch:

@@ -2,9 +2,10 @@
 
 Commands are deliberately thin: they resolve configuration and a project, then delegate to the
 core/storage/vision layers. ``init``, ``import``, ``preprocess``, ``detect``, ``order``, ``group``,
-``ocr``, ``translate``, ``glossary`` (add/list/remove), ``flag``, ``status``, ``export --mapping``
-(the source→OCR→translation JSON link graph), and ``run`` (the pipeline orchestrator) are
-functional; page ``export`` and ``review`` arrive in later milestones (batches 5.3, 6.2).
+``ocr``, ``translate``, ``glossary`` (add/list/remove), ``flag``, ``render`` (mask/remove source
+text), ``status``, ``export --mapping`` (the source→OCR→translation JSON link graph), and ``run``
+(the pipeline orchestrator) are functional; page ``export`` and ``review`` arrive in later
+milestones (batches 5.3, 6.2).
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from mfo.cli.stages import (
     save_import_config,
     save_ocr_config,
     save_preprocess_config,
+    save_render_config,
     save_structure_config,
     save_translate_config,
 )
@@ -47,6 +49,7 @@ from mfo.language import (
     TranslatorDependencyError,
     get_translator,
 )
+from mfo.render import MaskConfig, mask_file
 from mfo.storage import (
     JsonStateStore,
     ProjectStore,
@@ -56,6 +59,7 @@ from mfo.storage import (
     flag_low_confidence,
     group_into_units,
     import_pages,
+    mask_pages,
     ocr_regions,
     preprocess_pages,
     translate_units,
@@ -504,6 +508,33 @@ def flag(
     with _open_store(path) as store:
         flagged = flag_low_confidence(store, threshold=threshold)
     typer.secho(f"Flagged {len(flagged)} region(s) for review.", fg=typer.colors.GREEN)
+
+
+@app.command()
+def render(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+    pad: Annotated[
+        int, typer.Option("--pad", help="Grow each region by this many px to catch text edges.")
+    ] = 2,
+    border: Annotated[
+        int,
+        typer.Option("--border", help="Width (px) of the ring sampled to estimate background."),
+    ] = 4,
+    force: Annotated[
+        bool, typer.Option("--force", help="Re-mask even if a current result is cached.")
+    ] = False,
+) -> None:
+    """Mask/remove source text per page into a reversible masked layer (offline; FR-31/32/33)."""
+    config = MaskConfig(pad=pad, border=border)
+    with _open_store(path) as store:
+        save_render_config(store, config)
+        artifacts = mask_pages(
+            store,
+            mask=lambda image_path, boxes: mask_file(image_path, boxes, config),
+            signature=config.signature(),
+            force=force,
+        )
+    typer.secho(f"Masked {len(artifacts)} page(s).", fg=typer.colors.GREEN)
 
 
 def _not_yet(feature: str, batch: str) -> None:

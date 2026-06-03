@@ -221,7 +221,7 @@ plugs into.
 
 ## M5 — Rendering & Export  (MVP-9)
 
-### Batch 5.1 — Text masking / removal
+### Batch 5.1 — Text masking / removal ✅ *(landed — see CHANGELOG)*
 - **Scope:** Mask original text within regions; best-effort background reconstruction (inpaint);
   preserve line art; always reversible (keep originals).
 - **Satisfies:** FR-31, FR-32, FR-33, I-1, I-6; §10.8.

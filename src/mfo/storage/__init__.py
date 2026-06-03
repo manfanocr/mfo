@@ -25,6 +25,7 @@ from mfo.storage.pipeline_state import JsonStateStore
 from mfo.storage.preprocess import preprocess_pages
 from mfo.storage.project import ProjectStore
 from mfo.storage.reading_order import assign_reading_order
+from mfo.storage.render import MASK_KIND, mask_pages
 from mfo.storage.translate import Translated, translate_units
 
 __all__ = [
@@ -83,6 +84,9 @@ __all__ = [
     "build_mapping",
     "write_mapping",
     "MAPPING_VERSION",
+    # render
+    "mask_pages",
+    "MASK_KIND",
     # project
     "ProjectStore",
 ]

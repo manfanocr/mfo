@@ -12,7 +12,14 @@ from typer.testing import CliRunner
 
 from mfo.cli import app
 from mfo.cli.stages import build_pipeline
-from mfo.core import OCRSpan, Page, Region, TranslationCandidate, TranslationUnit
+from mfo.core import (
+    OCRSpan,
+    Page,
+    Region,
+    RenderArtifact,
+    TranslationCandidate,
+    TranslationUnit,
+)
 from mfo.core.enums import CandidateKind, RegionStatus
 from mfo.core.geometry import BBox
 from mfo.storage import ProjectStore
@@ -580,3 +587,52 @@ def test_cli_option_overrides_config_file(tmp_path: Path) -> None:
     runner.invoke(app, ["init", str(target), "--config", str(config), "--source", "zh"])
     with ProjectStore.open(target) as store:
         assert store.project.source_lang == "zh"
+
+
+def test_render_masks_pages_and_status_reports(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    source = tmp_path / "src"
+    source.mkdir()
+    _make_page_with_text(source / "p1.png")
+    runner.invoke(app, ["import", str(target), str(source)])
+    runner.invoke(app, ["detect", str(target)])
+
+    result = runner.invoke(app, ["render", str(target)])
+    assert result.exit_code == 0, result.stdout
+    assert "Masked 1 page(s)" in result.stdout
+
+    with ProjectStore.open(target) as store:
+        artifacts = store.db.list(RenderArtifact)
+        assert len(artifacts) == 1
+        masked = store.layout.root / artifacts[0].output_path
+        assert masked.is_file()
+        assert store.project.config["render"]["pad"] == 2
+
+    status = runner.invoke(app, ["status", str(target)])
+    assert "render" in status.stdout
+    assert "1 pages" in status.stdout
+
+
+def test_run_includes_render_stage_once_configured(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    source = tmp_path / "src"
+    source.mkdir()
+    _make_page_with_text(source / "p1.png")
+    runner.invoke(app, ["import", str(target), str(source)])
+    runner.invoke(app, ["detect", str(target)])
+
+    with ProjectStore.open(target) as store:
+        assert "render" not in build_pipeline(store).stage_names()
+
+    # Configuring render via `mfo render` makes it join the pipeline.
+    runner.invoke(app, ["render", str(target)])
+    with ProjectStore.open(target) as store:
+        assert "render" in build_pipeline(store).stage_names()
+
+    result = runner.invoke(app, ["run", str(target), "--force"])
+    assert result.exit_code == 0, result.stdout
+    assert "render" in result.stdout
+    with ProjectStore.open(target) as store:
+        assert len(store.db.list(RenderArtifact)) == 1
