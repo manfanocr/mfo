@@ -8,6 +8,66 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 
 ## [Unreleased]
 
+### Post-MVP — review-editor & engine improvements (outside the PLAN batches)
+
+Hardening and feature work on top of the completed M0–M6 MVP, driven by real use of the review
+editor. Not numbered PLAN batches; grouped here by kind. Each shipped with tests (NFR-29).
+
+#### Added
+- **Undo/redo (server-side, persistent).** Every review mutation — region ops *and* translation
+  edits — now records a page snapshot (`mfo.storage.history`), so changes are undoable and survive
+  reopen. Undo restores the before-snapshot, redo the after; a new edit truncates the per-page redo
+  tail. The same stack serves a **global** history and a **per-page** one (page states are
+  independent), exposed with a scope toggle in the editor and `Ctrl+Z` / `Ctrl+Y` (and
+  `Ctrl+Shift+Z`). New `HistoryEntry` entity + DB **migration 003**; routes `POST /api/undo`,
+  `POST /api/redo`, `GET /api/history`. The append-only `EditRecord` audit log is intentionally not
+  snapshotted, so undo reverts state while the audit stays truthful. (FR-42; I-2, I-3)
+- **PaddleOCR adapters.** A `paddleocr` OCR engine (JP/ZH/EN/KO, picks its model from the project's
+  source language) and a `paddle` text-box region detector (baseline fallback, like `ml`), behind
+  the new optional `ocr-paddle` extra and lazily imported so the offline core is untouched.
+  (FR-6, FR-10, FR-11; NFR-17, NFR-21)
+- **DeepL translator adapter** (`deepl`): opt-in, never default, configured entirely from
+  `MFO_DEEPL_*` env vars (nothing secret persisted), sending only the unit's text through the shared
+  injectable transport — unit-testable offline with no hard dependency. (FR-21; NFR-17, NFR-24, NFR-25)
+- **`docs/USER_GUIDE.md`** — how to choose and configure every detector, OCR engine, and translator
+  (argos / api / deepl, paddle, the ML detector), including DeepL free vs. pro, pointing the `api`
+  adapter at OpenAI-compatible gateways, and why a "free Google Translate" path isn't bundled
+  (unofficial / ToS). Linked from the README.
+- **Create / delete region in the editor.** Draw a box on the canvas → it is OCR'd and translated
+  immediately as a `MANUAL` unit (automation won't clobber it, I-3); delete a region the detector
+  got wrong (drops its OCR, detaches it from units, removes a now-empty unit). Region boxes resize
+  from any edge or corner (eight handles) and drag to move. (FR-38; §13.3)
+- **Per-region jobs.** Re-run OCR on the selected region and re-translate its unit on demand
+  (undoable; a fresh machine candidate preserves any human/AI candidate and selection — I-3). Routes
+  map a missing optional engine to a clear `503`. (FR-12, FR-15, FR-21; I-3)
+- **Review-editor UX:** remembers the last viewed page per project and reopens on it; page-list
+  counts refresh live after edits; a "Needs review" queue filter with `↑`/`↓` stepping through it;
+  an opt-in click-to-recenter toggle (arrow/queue navigation always recenters); and a top-bar Render
+  button that renders the current page and shows the result. (FR-36; §13)
+
+#### Changed
+- **One translation unit per bubble by default.** Grouping no longer chains nearby bubbles into a
+  shared unit (chaining is now opt-in via `mfo group --max-gap >0`), so each bubble's translation is
+  typeset into its own box instead of overflowing the union box of a merged chain. To keep
+  cross-bubble context, the default neighbour window widened 1→2 (more surrounding dialogue in each
+  unit's context bundle, consumed by the context-aware `api` adapter). (FR-19, FR-22; I-2; NFR-8)
+- **Oversized/frame detections are auto-ignored.** The connected-components baseline can't tell a
+  bubble from a panel, so blobs that are oversized or span most of the page width are now auto-marked
+  `ignore` — kept in the data (I-1/I-2) but skipped by OCR, rendering, and the review queue — instead
+  of being trusted as bubbles. The `paddle`/`ml` detectors box actual text and avoid this. (I-4)
+- The review SPA's assets are served with `Cache-Control: no-cache`, so an updated `app.js`/`app.css`
+  is never masked by a stale browser copy.
+
+#### Fixed
+- A missing Argos language package now raises a clear, actionable `TranslatorDependencyError` naming
+  the package to install, instead of Argos's cryptic `'NoneType' … get_translation` AttributeError. (I-7)
+- The review page list keyed off the wrong field (`id` vs. the API's `page_id`), so pages weren't
+  selectable — fixed across the SPA.
+- Invisible click-blocking overlays (the HTML `hidden` attribute overridden by an explicit CSS
+  `display`) left the "Select a page" placeholder, the inspector panel, and region clicks dead;
+  fixed with `[hidden] { display: none !important }`, restoring region selection, the side panel, and
+  shift-click-to-merge.
+
 ### Added
 - **Batch 4.4 — API translation adapter** (M4 Translation — optional, opt-in, post-MVP):
   - `mfo.language.translate.ApiTranslator`: an opt-in cloud/LLM translator behind the existing `Translator`
