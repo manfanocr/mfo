@@ -249,7 +249,7 @@ plugs into.
 - **Satisfies:** I-3, FR-37, FR-42, FR-49; §13.2.
 - **DoD:** API serves and mutates project state; edits persisted as records.
 
-### Batch 6.2 — Local web editor UI
+### Batch 6.2 — Local web editor UI ✅ *(landed — see CHANGELOG)*
 - **Scope:** `mfo review` launches local app: image canvas, clickable regions, side panel
   (OCR/translation/history/confidence), keyboard navigation, zoom/pan, dark mode.
 - **Satisfies:** FR-36, NFR-13/14/15/16; §13.1–13.5.

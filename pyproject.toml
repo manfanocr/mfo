@@ -86,6 +86,11 @@ ignore_missing_imports = true
 module = ["argostranslate.*"]
 ignore_missing_imports = true
 
+# uvicorn is an optional dependency (the `review` extra); not present in the type-check env.
+[[tool.mypy.overrides]]
+module = ["uvicorn.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"

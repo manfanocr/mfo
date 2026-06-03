@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>mfo review</title>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <header id="topbar">
+      <div class="brand">mfo<span class="muted"> review</span></div>
+      <div id="project-meta" class="muted"></div>
+      <div class="spacer"></div>
+      <div class="zoom-controls" aria-label="Zoom">
+        <button id="zoom-out" title="Zoom out (-)">−</button>
+        <span id="zoom-level">100%</span>
+        <button id="zoom-in" title="Zoom in (+)">+</button>
+        <button id="zoom-fit" title="Fit page (0)">Fit</button>
+      </div>
+      <button id="theme-toggle" title="Toggle dark mode (d)">◐</button>
+    </header>
+
+    <main id="layout">
+      <!-- Main screen: project + page list (§13.1) -->
+      <nav id="pages-panel" aria-label="Pages">
+        <h2>Pages</h2>
+        <ul id="page-list"></ul>
+      </nav>
+
+      <!-- Page editor: image canvas with clickable regions (§13.2) -->
+      <section id="canvas-viewport" tabindex="0" aria-label="Page canvas">
+        <div id="canvas-stage">
+          <img id="page-img" alt="" draggable="false" />
+          <div id="region-overlay"></div>
+        </div>
+        <div id="canvas-empty" class="empty">Select a page to begin.</div>
+      </section>
+
+      <!-- Side panel: OCR, translation, history, confidence, metadata (§13.2) -->
+      <aside id="inspector" aria-label="Region details">
+        <div id="inspector-empty" class="empty">
+          Click a region, or use ↑/↓ to step through reading order.
+        </div>
+        <div id="inspector-body" hidden></div>
+      </aside>
+    </main>
+
+    <footer id="statusbar">
+      <span id="status-text">Loading…</span>
+      <span class="spacer"></span>
+      <span class="muted" id="shortcuts-hint">
+        ↑/↓ regions · ←/→ pages · +/− zoom · 0 fit · d theme
+      </span>
+    </footer>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

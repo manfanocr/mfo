@@ -9,6 +9,25 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 6.2 — Local web editor UI** (M6 Review Editor):
+  - `mfo.ui.server`: `create_app` now also serves the bundled single-page editor — `GET /` returns the
+    editor HTML and `/static/*` serves its CSS/JS, mounted after the API routes so it never shadows them.
+    A new `serve(store, host, port)` runs the app locally with uvicorn (binding to `127.0.0.1` by default
+    so the editor stays a local-first, offline tool — I-7/I-8); uvicorn ships with the `review` extra and is
+    imported lazily, so `create_app` and the tests need only FastAPI.
+  - `mfo/ui/static/`: a dependency-free SPA (`index.html` + `app.css` + `app.js`, no build step) over the
+    batch-6.1 read API. It lists the project's pages with low-confidence badges (§13.1), draws the page image
+    on a zoom/pan canvas with clickable region overlays — low-confidence regions visually distinct (I-4,
+    §13.5) — and shows the selected region's metadata, OCR, translation, candidates (selection marked) and
+    edit history in a side panel (§13.2). Keyboard navigation steps through regions in reading order and
+    across pages, with zoom/pan/fit and a persisted dark mode (FR-36, NFR-13/14/15/16, §13.5). In-place
+    editing and region ops follow in batch 6.3; this batch is read + navigate.
+  - CLI: `mfo review <project>` now launches the local web editor (was a placeholder), opening the store with
+    `check_same_thread=False` for the threaded server and exiting cleanly with an actionable message when the
+    `review` extra is absent; `--host`/`--port` configurable. (`_not_yet` removed — every command is now live.)
+  - Tests: the FastAPI client now also asserts `GET /` serves the editor page and `/static/app.{js,css}` serve
+    the SPA assets (skipped when the `review` extra is absent).
+  - Satisfies: FR-36; NFR-13, NFR-14, NFR-15, NFR-16; spec §13.1-13.5.
 - **Batch 6.1 — Review backend/API** (M6 Review Editor):
   - `mfo.ui.review`: the framework-free heart of the review backend — pure functions over a `ProjectStore`
     that assemble the page-editor payloads (`project_summary` for the main screen's per-page index;
@@ -457,8 +476,10 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   typesetting engine), and 5.3 (composite & export pages — typesetting the selected translation onto each
   masked layer and exporting translated pages + mapping/manifest/transcript, MVP-9). **M6 (Review Editor)
   started** — batch 6.1 (review backend/API: the framework-free review service + a FastAPI shell serving
-  and mutating project state, edits persisted as records). Next up: **batch 6.2** (local web editor UI)
-  then 6.3 (in-place editing & region ops); completing M6 satisfies the MVP Definition of Done (§21).
+  and mutating project state, edits persisted as records) and batch 6.2 (local web editor UI: `mfo review`
+  launches a dependency-free SPA — page list, zoom/pan canvas with clickable region overlays, side panel of
+  OCR/translation/candidates/history/confidence, keyboard navigation, dark mode). Next up: **batch 6.3**
+  (in-place editing & region ops); completing M6 satisfies the MVP Definition of Done (§21).
 
 <!--
 Template for a landed batch:

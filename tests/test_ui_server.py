@@ -123,3 +123,22 @@ def test_select_unknown_candidate_is_404(client: tuple[TestClient, ProjectStore]
     unit = store.db.list(TranslationUnit)[0]
     response = api.post(f"/api/units/{unit.id}/select", json={"candidate_id": "cand_missing"})
     assert response.status_code == 404
+
+
+# -- the bundled editor SPA (§13.1-13.5) --------------------------------------------------
+
+
+def test_root_serves_the_editor_page(client: tuple[TestClient, ProjectStore]) -> None:
+    api, _ = client
+    response = api.get("/")
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "mfo review" in response.text
+
+
+def test_static_assets_are_served(client: tuple[TestClient, ProjectStore]) -> None:
+    api, _ = client
+    for asset, marker in (("app.js", "/api/project"), ("app.css", "--bg")):
+        response = api.get(f"/static/{asset}")
+        assert response.status_code == 200, asset
+        assert marker in response.text

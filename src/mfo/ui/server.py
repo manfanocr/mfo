@@ -1,18 +1,20 @@
-"""FastAPI app exposing the review backend over HTTP (spec §13.2; FR-37/42/49; I-3).
+"""FastAPI app exposing the review backend over HTTP and serving the editor SPA (spec §13).
 
-A thin shell over :mod:`mfo.ui.review`: every route resolves to a framework-free service function,
-so the routing here stays declarative and the logic stays testable without a server. The app reads
-project state (pages, regions, OCR, translations, confidence, edit history) and applies the two
-review edits — translation-in-place and candidate re-selection — each persisted as an
-:class:`~mfo.core.models.EditRecord`. Source images are served read-only (I-1).
+A thin shell over :mod:`mfo.ui.review`: every API route resolves to a framework-free service
+function, so the routing here stays declarative and the logic stays testable without a server. The
+app reads project state (pages, regions, OCR, translations, confidence, edit history) and applies
+the two review edits — translation-in-place and candidate re-selection — each persisted as an
+:class:`~mfo.core.models.EditRecord`. Source images are served read-only (I-1). The bundled
+single-page editor under ``static/`` is served at ``/`` and consumes that same API (§13.1-13.5).
 
 FastAPI is an optional dependency (the ``review`` extra); importing this module without it raises a
 clear, actionable error rather than a bare ``ImportError`` so the offline core stays unaffected
-(I-7/I-8). The launcher (``mfo review``) arrives in batch 6.2 and builds on :func:`create_app`.
+(I-7/I-8). :func:`serve` launches the local app behind ``mfo review``.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from mfo.storage.project import ProjectStore
@@ -29,11 +31,14 @@ from mfo.ui.review import (
 try:
     from fastapi import FastAPI, Request
     from fastapi.responses import FileResponse, JSONResponse
+    from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel
 except ModuleNotFoundError as exc:  # pragma: no cover - exercised only without the extra
     raise ModuleNotFoundError(
         "The review editor needs FastAPI. Install it with:  pip install 'mfo[review]'"
     ) from exc
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 class TranslationEdit(BaseModel):
@@ -86,4 +91,32 @@ def create_app(store: ProjectStore) -> FastAPI:
     def post_select(unit_id: str, body: CandidateSelection) -> dict[str, Any]:
         return select_candidate(store, unit_id, body.candidate_id, editor=body.editor)
 
+    @app.get("/")
+    def index() -> FileResponse:
+        return FileResponse(STATIC_DIR / "index.html")
+
+    # The SPA's assets (CSS/JS); mounted last so it never shadows the API routes above.
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
     return app
+
+
+def serve(
+    store: ProjectStore,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8000,
+) -> None:
+    """Run the review editor locally with uvicorn (blocking) — the body of ``mfo review``.
+
+    Binds to localhost by default so the editor stays a local-first, offline tool (I-7/I-8); the
+    caller owns the store's lifecycle. uvicorn ships with the ``review`` extra.
+    """
+    try:
+        import uvicorn
+    except ModuleNotFoundError as exc:  # pragma: no cover - exercised only without the extra
+        raise ModuleNotFoundError(
+            "The review editor needs uvicorn. Install it with:  pip install 'mfo[review]'"
+        ) from exc
+
+    uvicorn.run(create_app(store), host=host, port=port, log_level="warning")

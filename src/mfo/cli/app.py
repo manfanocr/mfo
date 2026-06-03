@@ -4,8 +4,8 @@ Commands are deliberately thin: they resolve configuration and a project, then d
 core/storage/vision layers. ``init``, ``import``, ``preprocess``, ``detect``, ``order``, ``group``,
 ``ocr``, ``translate``, ``glossary`` (add/list/remove), ``flag``, ``render`` (mask/remove source
 text), ``status``, ``export`` (composite translated pages + the source→OCR→translation JSON mapping,
-manifest, and transcript; ``--mapping`` for the mapping alone), and ``run`` (the pipeline
-orchestrator) are functional; ``review`` arrives in a later milestone (batch 6.2).
+manifest, and transcript; ``--mapping`` for the mapping alone), ``run`` (the pipeline
+orchestrator), and ``review`` (launch the local web editor) are functional.
 """
 
 from __future__ import annotations
@@ -546,13 +546,6 @@ def render(
     typer.secho(f"Masked {len(artifacts)} page(s).", fg=typer.colors.GREEN)
 
 
-def _not_yet(feature: str, batch: str) -> None:
-    typer.secho(
-        f"{feature} is not implemented yet (planned in batch {batch}).",
-        fg=typer.colors.YELLOW,
-    )
-
-
 @app.command()
 def run(
     path: Annotated[Path, typer.Argument(help="Project directory.")],
@@ -628,8 +621,28 @@ def export(
 @app.command()
 def review(
     path: Annotated[Path, typer.Argument(help="Project directory.")],
+    host: Annotated[str, typer.Option(help="Host to bind the local server to.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="Port to serve on.")] = 8000,
 ) -> None:
-    """Launch the local review editor (placeholder)."""
-    with _open_store(path):
-        pass
-    _not_yet("The review editor", "6.2")
+    """Launch the local web review editor (FR-36; §13)."""
+    try:
+        from mfo.ui.server import serve
+    except ModuleNotFoundError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+
+    # The server needs cross-thread access to the SQLite connection (uvicorn runs request
+    # handlers off worker threads); the store stays read-mostly and edits go through the API.
+    try:
+        store = ProjectStore.open(path, check_same_thread=False)
+    except FileNotFoundError:
+        typer.secho(f"No mfo project found at {path}.", fg=typer.colors.RED, err=True)
+        typer.secho("Create one with:  mfo init <dir>", err=True)
+        raise typer.Exit(code=1) from None
+    try:
+        url = f"http://{host}:{port}"
+        typer.secho(f"mfo review serving {path} at {url}", fg=typer.colors.GREEN)
+        typer.echo("Press Ctrl+C to stop.")
+        serve(store, host=host, port=port)
+    finally:
+        store.close()
