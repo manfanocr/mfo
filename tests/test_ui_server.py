@@ -125,6 +125,82 @@ def test_select_unknown_candidate_is_404(client: tuple[TestClient, ProjectStore]
     assert response.status_code == 404
 
 
+# -- region operations (§13.3/13.4; FR-20/38/39/40) ---------------------------------------
+
+
+def test_put_region_status(client: tuple[TestClient, ProjectStore]) -> None:
+    api, store = client
+    region = store.db.list(Region)[0]
+    response = api.put(f"/api/regions/{region.id}/status", json={"status": "correct"})
+    assert response.status_code == 200
+    assert response.json()["regions"][0]["status"] == "correct"
+
+
+def test_put_region_status_bad_value_is_400(client: tuple[TestClient, ProjectStore]) -> None:
+    api, store = client
+    region = store.db.list(Region)[0]
+    response = api.put(f"/api/regions/{region.id}/status", json={"status": "nope"})
+    assert response.status_code == 400
+
+
+def test_put_region_bbox(client: tuple[TestClient, ProjectStore]) -> None:
+    api, store = client
+    region = store.db.list(Region)[0]
+    body = {"x": 1, "y": 2, "width": 30, "height": 40}
+    response = api.put(f"/api/regions/{region.id}/bbox", json=body)
+    assert response.status_code == 200
+    assert response.json()["regions"][0]["bbox"] == {"x": 1, "y": 2, "width": 30, "height": 40}
+
+
+def test_split_then_merge_round_trips(client: tuple[TestClient, ProjectStore]) -> None:
+    api, store = client
+    region = store.db.list(Region)[0]
+    page_id = region.page_id
+
+    split = api.post(f"/api/regions/{region.id}/split", json={"ratio": 0.5})
+    assert split.status_code == 200
+    ids = [r["region_id"] for r in split.json()["regions"]]
+    assert len(ids) == 2
+
+    merged = api.post("/api/regions/merge", json={"region_ids": ids})
+    assert merged.status_code == 200
+    assert len(merged.json()["regions"]) == 1
+    assert merged.json()["page_id"] == page_id
+
+
+def test_put_page_order(client: tuple[TestClient, ProjectStore]) -> None:
+    api, store = client
+    region = store.db.list(Region)[0]
+    response = api.put(
+        f"/api/pages/{region.page_id}/order", json={"ordered_region_ids": [region.id]}
+    )
+    assert response.status_code == 200
+    assert response.json()["regions"][0]["reading_order_index"] == 0
+
+
+def test_get_review_queue(client: tuple[TestClient, ProjectStore]) -> None:
+    api, _ = client
+    response = api.get("/api/review-queue")
+    assert response.status_code == 200
+    assert len(response.json()["entries"]) == 1
+
+
+def test_render_endpoints(client: tuple[TestClient, ProjectStore]) -> None:
+    api, store = client
+    page = store.db.list(Page)[0]
+
+    # Before rendering, the render image is not available yet.
+    assert api.get(f"/api/pages/{page.id}/render").status_code == 404
+
+    rendered = api.post(f"/api/pages/{page.id}/render")
+    assert rendered.status_code == 200
+    assert rendered.json()["rendered"] is True
+
+    image = api.get(f"/api/pages/{page.id}/render")
+    assert image.status_code == 200
+    assert image.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+
 # -- the bundled editor SPA (§13.1-13.5) --------------------------------------------------
 
 

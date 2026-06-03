@@ -17,20 +17,27 @@
         <button id="zoom-in" title="Zoom in (+)">+</button>
         <button id="zoom-fit" title="Fit page (0)">Fit</button>
       </div>
+      <button id="queue-btn" title="Review low-confidence first (n / p to step)">Queue</button>
+      <button id="render-toggle" title="Preview the re-rendered page (r)">Preview</button>
       <button id="theme-toggle" title="Toggle dark mode (d)">◐</button>
     </header>
 
     <main id="layout">
-      <!-- Main screen: project + page list (§13.1) -->
+      <!-- Main screen: project + page list (§13.1); review queue overlays it (§13.4) -->
       <nav id="pages-panel" aria-label="Pages">
         <h2>Pages</h2>
         <ul id="page-list"></ul>
+        <div id="queue-panel" hidden>
+          <h2>Review queue · low-confidence first</h2>
+          <div id="queue-list"></div>
+        </div>
       </nav>
 
       <!-- Page editor: image canvas with clickable regions (§13.2) -->
       <section id="canvas-viewport" tabindex="0" aria-label="Page canvas">
         <div id="canvas-stage">
           <img id="page-img" alt="" draggable="false" />
+          <img id="render-preview" alt="Rendered preview" draggable="false" hidden />
           <div id="region-overlay"></div>
         </div>
         <div id="canvas-empty" class="empty">Select a page to begin.</div>
@@ -49,7 +56,8 @@
       <span id="status-text">Loading…</span>
       <span class="spacer"></span>
       <span class="muted" id="shortcuts-hint">
-        ↑/↓ regions · ←/→ pages · +/− zoom · 0 fit · d theme
+        ↑/↓ regions · ←/→ pages · +/− zoom · 0 fit · e edit · 1-4 status · s split · m merge · r
+        preview · n/p queue · d theme
       </span>
     </footer>
 

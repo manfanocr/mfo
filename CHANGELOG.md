@@ -9,6 +9,34 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 6.3 — In-place editing & region ops** (M6 Review Editor — completes M6 / the MVP):
+  - `mfo.ui.review`: the framework-free service grew the editing operations of §13.3/13.4 as pure functions
+    over a `ProjectStore`, each persisting directly and returning the refreshed page view: `set_region_status`
+    flags a region correct / needs-review / ignore / manual (FR-40) — a user choice automation won't clobber
+    (I-3); `move_region` repositions/resizes a region's box (FR-38); `reorder_regions` applies a manual
+    reading-order correction (FR-20); `split_region` cuts a region in two (horizontal or vertical, at a ratio),
+    inserting the new piece right after the original in reading order and in any unit that contained it; and
+    `merge_regions` unions two+ regions on a page into the earliest, moving the others' OCR onto it so no
+    transcription is lost (I-2). `review_queue` orders every region with low-confidence ones first (§13.4,
+    I-4). `rerender_page` re-runs the offline mask + composite stages (sharing the CLI's `composite@1`
+    signature, so only changed pages recompute — NFR-8) and `page_render_path` serves the preview (I-1).
+  - `mfo.ui.server`: new routes over those ops — `PUT /api/regions/{id}/status`, `PUT /api/regions/{id}/bbox`,
+    `POST /api/regions/{id}/split`, `POST /api/regions/merge`, `PUT /api/pages/{id}/order`,
+    `GET /api/review-queue`, and `POST`/`GET /api/pages/{id}/render`. A `ValueError` from a rejected op (bad
+    status, ratio, or non-permutation order) now maps to HTTP 400, alongside the existing 404 for missing
+    entities.
+  - `mfo/ui/static/`: the SPA became a real editor. The side panel edits the translation in place (textarea +
+    Save, Ctrl+Enter), reverts to any candidate by clicking it, and flags status (buttons + keys 1-4). On the
+    canvas, the selected region drags to move and has a corner handle to resize (persisted on mouse-up);
+    shift-click marks regions for a merge; Split / Merge / reading-order nudge buttons and `s`/`m` keys drive
+    the structural ops. A Queue panel lists regions low-confidence-first with `n`/`p` to step through them, and
+    a Preview toggle (`r`) overlays the re-rendered page, dropping itself when a later edit invalidates it.
+  - Tests: service-layer coverage for every op (status set/persist + reject unknown; move + reject negative
+    size; reorder + reject non-permutation; split geometry/unit insertion + reject bad ratio; merge union +
+    OCR move + unit collapse + needs-two; queue low-confidence-first; re-render produces a PNG and the
+    pre-render path 404s) and HTTP coverage (status, bbox, split↔merge round-trip, order, queue, render
+    endpoints incl. 404-before-render and 400-on-bad-input).
+  - Satisfies: FR-20, FR-26, FR-37, FR-38, FR-39, FR-40; I-2, I-3, I-4; spec §13.3, §13.4.
 - **Batch 6.2 — Local web editor UI** (M6 Review Editor):
   - `mfo.ui.server`: `create_app` now also serves the bundled single-page editor — `GET /` returns the
     editor HTML and `/static/*` serves its CSS/JS, mounted after the API routes so it never shadows them.
@@ -475,11 +503,16 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   (text masking / removal — the reversible masked base layer), 5.2 (font fitting & placement — the pure
   typesetting engine), and 5.3 (composite & export pages — typesetting the selected translation onto each
   masked layer and exporting translated pages + mapping/manifest/transcript, MVP-9). **M6 (Review Editor)
-  started** — batch 6.1 (review backend/API: the framework-free review service + a FastAPI shell serving
-  and mutating project state, edits persisted as records) and batch 6.2 (local web editor UI: `mfo review`
+  complete** — batch 6.1 (review backend/API: the framework-free review service + a FastAPI shell serving
+  and mutating project state, edits persisted as records), batch 6.2 (local web editor UI: `mfo review`
   launches a dependency-free SPA — page list, zoom/pan canvas with clickable region overlays, side panel of
-  OCR/translation/candidates/history/confidence, keyboard navigation, dark mode). Next up: **batch 6.3**
-  (in-place editing & region ops); completing M6 satisfies the MVP Definition of Done (§21).
+  OCR/translation/candidates/history/confidence, keyboard navigation, dark mode), and batch 6.3 (in-place
+  editing & region ops: edit translations in place, revert candidates, status flags, move/resize, split/merge,
+  manual reading-order, a low-confidence-first review queue, and a re-rendered page preview). **With M0–M6
+  complete, the MVP Definition of Done (§21) is satisfied** — a user can import a folder of pages, detect &
+  OCR, get context-aware translations, review/edit in place, export, and reopen later with all mappings
+  intact. Off-critical-path batches remain optional: 4.4 (API translation adapter), 3.3 (panel detection),
+  2.2 (ML detector adapter).
 
 <!--
 Template for a landed batch:

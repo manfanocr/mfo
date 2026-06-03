@@ -121,6 +121,7 @@ button:hover {
 
 #pages-panel {
   border-right: 1px solid var(--border);
+  position: relative;
 }
 
 #inspector {
@@ -237,6 +238,11 @@ h2 {
   box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--region);
 }
 
+/* Tagged for a merge (shift-click). */
+.region-box.marked {
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--good);
+}
+
 .region-tag {
   position: absolute;
   top: -10px;
@@ -253,6 +259,54 @@ h2 {
 .region-box.low .region-tag {
   background: var(--region-low);
   color: #0b0d11;
+}
+
+/* Status tints on the overlay so the review state is visible on the page itself (FR-40, I-4). */
+.region-box.status-correct {
+  border-color: var(--good);
+  background: rgba(76, 199, 127, 0.12);
+}
+
+.region-box.status-ignore {
+  border-style: dashed;
+  opacity: 0.5;
+}
+
+.region-box.status-needs_review {
+  border-color: var(--bad);
+}
+
+/* Drag handle (bottom-right) for resizing the selected region (FR-38). */
+.region-handle {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  width: 12px;
+  height: 12px;
+  background: var(--accent);
+  border: 2px solid var(--bg);
+  border-radius: 50%;
+  cursor: nwse-resize;
+}
+
+.region-box.dragging {
+  cursor: grabbing;
+}
+
+/* Rendered-page preview layer over the canvas (§13.3). */
+#render-preview {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  box-shadow: 0 0 0 1px var(--border), 0 8px 30px rgba(0, 0, 0, 0.35);
+}
+
+#render-toggle.active,
+#queue-btn.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
 }
 
 .empty {
@@ -383,6 +437,97 @@ h2 {
 
 .edit-diff .after {
   color: var(--good);
+}
+
+/* -- in-place editing controls (§13.3/13.4) ---------------------------------- */
+
+.insp-edit {
+  width: 100%;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  resize: vertical;
+  min-height: 64px;
+}
+
+.insp-edit:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.btn-row button {
+  padding: 3px 9px;
+  font-size: 12px;
+}
+
+.btn-row button.primary {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+
+.btn-row button.active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.cand {
+  cursor: pointer;
+}
+
+.cand:hover {
+  border-color: var(--accent);
+}
+
+/* -- review queue ------------------------------------------------------------- */
+
+#queue-panel {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-panel);
+  overflow-y: auto;
+  padding: 12px;
+  z-index: 1;
+}
+
+.queue-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.queue-row:hover {
+  background: var(--bg-elev);
+}
+
+.queue-row.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.queue-row .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--good);
+  flex: none;
+}
+
+.queue-row.low .dot {
+  background: var(--region-low);
 }
 
 /* -- status bar --------------------------------------------------------------- */

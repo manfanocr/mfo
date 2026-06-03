@@ -1,16 +1,21 @@
-"""Read views and edit mutations behind the review editor (spec §13.2; FR-37/42/49; I-3).
+"""Read views and edit mutations behind the review editor (spec §13.2/13.3/13.4; FR-37/42/49; I-3).
 
 This is the framework-free heart of the review backend: pure functions over a
 :class:`~mfo.storage.project.ProjectStore` that (a) assemble the page-editor payloads the UI
 shows — the page, its regions, their OCR, the translation units with full candidate and edit
-history, and confidence (FR-42, §13.2) — and (b) apply the two edits review needs at this stage:
-editing a unit's translation in place (FR-37) and re-selecting a prior candidate (FR-49).
+history, and confidence (FR-42, §13.2) — and (b) apply the edits review needs: editing a unit's
+translation in place (FR-37), re-selecting a prior candidate (FR-49), the region operations of
+§13.3/13.4 — set status (FR-40), move/resize a region (FR-38), manual reading-order correction
+(FR-20), and split/merge regions (FR-39) — plus the low-confidence-first review queue and a
+single-page re-render preview so edits become visible immediately.
 
-Every mutation appends an immutable :class:`~mfo.core.models.EditRecord` (FR-42) and lands the
+Translation mutations append an immutable :class:`~mfo.core.models.EditRecord` (FR-42) and land the
 user's choice as a *selected* translation so it takes precedence over automation: the translate
 stage preserves non-``RAW`` candidates and a selection pointing at one, so a later re-translation
-never silently overwrites approved text (I-3). Keeping this layer HTTP-free means the review logic
-is fully testable without a running server; :mod:`mfo.ui.server` is a thin FastAPI shell over it.
+never silently overwrites approved text (I-3). Region operations persist directly on the
+:class:`~mfo.core.models.Region`/:class:`~mfo.core.models.TranslationUnit` rows so they survive
+re-open. Keeping this layer HTTP-free means the review logic is fully testable without a running
+server; :mod:`mfo.ui.server` is a thin FastAPI shell over it.
 """
 
 from __future__ import annotations
@@ -22,15 +27,29 @@ from mfo.core import (
     OCRSpan,
     Page,
     Region,
+    RenderArtifact,
     TranslationCandidate,
     TranslationUnit,
     selected_text,
 )
 from mfo.core.confidence import DEFAULT_THRESHOLD, aggregate_confidence, is_low_confidence
-from mfo.core.enums import CandidateKind, EditAction
+from mfo.core.enums import CandidateKind, EditAction, RegionStatus
 from mfo.core.geometry import BBox
+from mfo.render import (
+    CompositeArtifact,
+    MaskConfig,
+    Placement,
+    composite_file,
+    get_preset,
+    mask_file,
+)
+from mfo.storage import RENDER_KIND, composite_pages, mask_pages
 from mfo.storage.edits import list_edits, record_edit
 from mfo.storage.project import ProjectStore
+from mfo.storage.render import PagePlacement
+
+# A reading-order index sentinel that sorts unordered regions last, mirroring page_view's ordering.
+_ORDER_LAST = 1 << 30
 
 
 class NotFoundError(LookupError):
@@ -118,6 +137,30 @@ def _require_unit(store: ProjectStore, unit_id: str) -> TranslationUnit:
     return unit
 
 
+def _require_region(store: ProjectStore, region_id: str) -> Region:
+    region = store.db.get(Region, region_id)
+    if region is None:
+        raise NotFoundError(f"no region {region_id!r}")
+    return region
+
+
+def _order_key(region: Region) -> tuple[int, str]:
+    """Reading-order sort key (unordered regions sort last, then by id for determinism)."""
+    index = region.reading_order_index
+    return (index if index is not None else _ORDER_LAST, region.id)
+
+
+def _page_regions_in_order(store: ProjectStore, page_id: str) -> list[Region]:
+    return sorted(store.db.list(Region, where=("page_id", page_id)), key=_order_key)
+
+
+def _reindex(store: ProjectStore, ordered: list[Region]) -> None:
+    """Persist a contiguous 0..n-1 reading order across a page's regions (only what changed)."""
+    for index, region in enumerate(ordered):
+        if region.reading_order_index != index:
+            store.db.save(region.model_copy(update={"reading_order_index": index}))
+
+
 def project_summary(store: ProjectStore, *, threshold: float = DEFAULT_THRESHOLD) -> dict[str, Any]:
     """Project header plus a per-page index for the main screen (§13.1, FR-49 navigation)."""
     project = store.project
@@ -178,13 +221,7 @@ def page_view(store: ProjectStore, page_id: str) -> dict[str, Any]:
     spans = {
         region.id: store.db.list(OCRSpan, where=("region_id", region.id)) for region in regions
     }
-    ordered = sorted(
-        regions,
-        key=lambda r: (
-            r.reading_order_index if r.reading_order_index is not None else 1 << 30,
-            r.id,
-        ),
-    )
+    ordered = sorted(regions, key=_order_key)
     units = store.db.list(TranslationUnit, where=("page_id", page.id))
     return {
         "page_id": page.id,
@@ -275,3 +312,233 @@ def select_candidate(
         editor=editor,
     )
     return _unit_payload(store, updated)
+
+
+# -- region operations (§13.3/13.4; FR-20/38/39/40) ---------------------------------------
+#
+# These persist directly on the Region/TranslationUnit rows (not as EditRecords, which are unit
+# scoped) and return the refreshed page view so the editor can redraw in one round-trip. Each op
+# that changes geometry leaves the page's reading order contiguous so re-render and export stay
+# deterministic; a later re-render picks the change up via its placement signature (NFR-8).
+
+
+def set_region_status(store: ProjectStore, region_id: str, status: str) -> dict[str, Any]:
+    """Flag a region correct / needs-review / ignore / manual (FR-40); a user edit wins (I-3).
+
+    The flag persists on the region, so confidence-driven auto-flagging (which only touches ``AUTO``
+    regions) never clobbers it on a later run.
+    """
+    region = _require_region(store, region_id)
+    try:
+        new_status = RegionStatus(status)
+    except ValueError:
+        allowed = ", ".join(s.value for s in RegionStatus)
+        raise ValueError(f"unknown region status {status!r}; allowed: {allowed}") from None
+    store.db.save(region.model_copy(update={"status": new_status}))
+    return page_view(store, region.page_id)
+
+
+def move_region(
+    store: ProjectStore, region_id: str, *, x: float, y: float, width: float, height: float
+) -> dict[str, Any]:
+    """Reposition and resize a region's bounding box (FR-38). Re-render reflows text into it."""
+    region = _require_region(store, region_id)
+    if width < 0 or height < 0:
+        raise ValueError("region width and height must be non-negative")
+    bbox = BBox(x=x, y=y, width=width, height=height)
+    store.db.save(region.model_copy(update={"bbox": bbox}))
+    return page_view(store, region.page_id)
+
+
+def reorder_regions(
+    store: ProjectStore, page_id: str, ordered_region_ids: list[str]
+) -> dict[str, Any]:
+    """Apply a manual reading-order correction to a page (FR-20).
+
+    ``ordered_region_ids`` must be a permutation of the page's region ids; each region's
+    ``reading_order_index`` is set to its position in that list.
+    """
+    _require_page(store, page_id)
+    by_id = {region.id: region for region in store.db.list(Region, where=("page_id", page_id))}
+    if set(ordered_region_ids) != set(by_id):
+        raise ValueError("ordered_region_ids must be a permutation of the page's regions")
+    _reindex(store, [by_id[rid] for rid in ordered_region_ids])
+    return page_view(store, page_id)
+
+
+def split_region(
+    store: ProjectStore, region_id: str, *, orientation: str = "horizontal", ratio: float = 0.5
+) -> dict[str, Any]:
+    """Split a region into two adjacent regions (FR-39).
+
+    ``orientation`` ``"horizontal"`` cuts top/bottom, ``"vertical"`` cuts left/right, at ``ratio``
+    of the box. The original keeps the first piece and its OCR; a new region takes the second piece
+    and is inserted right after the original in reading order and in any unit that contained it.
+    """
+    if not 0.0 < ratio < 1.0:
+        raise ValueError("split ratio must be between 0 and 1 (exclusive)")
+    if orientation not in ("horizontal", "vertical"):
+        raise ValueError("orientation must be 'horizontal' or 'vertical'")
+    region = _require_region(store, region_id)
+    b = region.bbox
+    if orientation == "horizontal":
+        cut = b.height * ratio
+        first = BBox(x=b.x, y=b.y, width=b.width, height=cut)
+        second = BBox(x=b.x, y=b.y + cut, width=b.width, height=b.height - cut)
+    else:
+        cut = b.width * ratio
+        first = BBox(x=b.x, y=b.y, width=cut, height=b.height)
+        second = BBox(x=b.x + cut, y=b.y, width=b.width - cut, height=b.height)
+
+    new_region = Region(page_id=region.page_id, bbox=second, type=region.type, status=region.status)
+    store.db.save(region.model_copy(update={"bbox": first}))
+    store.db.save(new_region)
+
+    ordered = [r for r in _page_regions_in_order(store, region.page_id) if r.id != new_region.id]
+    position = next(i for i, r in enumerate(ordered) if r.id == region.id)
+    ordered.insert(position + 1, new_region)
+    _reindex(store, ordered)
+
+    for unit in store.db.list(TranslationUnit, where=("page_id", region.page_id)):
+        if region.id in unit.ordered_region_ids:
+            ids = list(unit.ordered_region_ids)
+            ids.insert(ids.index(region.id) + 1, new_region.id)
+            store.db.save(unit.model_copy(update={"ordered_region_ids": ids}))
+
+    return page_view(store, region.page_id)
+
+
+def merge_regions(store: ProjectStore, region_ids: list[str]) -> dict[str, Any]:
+    """Merge two or more regions on the same page into one (FR-39).
+
+    The earliest region in reading order survives (keeping its id, type and status); its box grows
+    to the union, the others' OCR moves onto it so no transcription is lost (I-2), the others are
+    deleted, and every unit that referenced a merged region now references the survivor (order
+    preserved, duplicates collapsed).
+    """
+    if len(region_ids) < 2:
+        raise ValueError("merging needs at least two regions")
+    regions = [_require_region(store, rid) for rid in region_ids]
+    page_ids = {region.page_id for region in regions}
+    if len(page_ids) != 1:
+        raise ValueError("can only merge regions on the same page")
+    page_id = page_ids.pop()
+
+    survivor = min(regions, key=_order_key)
+    others = [region for region in regions if region.id != survivor.id]
+    merged_ids = {region.id for region in others}
+
+    for other in others:
+        for span in store.db.list(OCRSpan, where=("region_id", other.id)):
+            store.db.save(span.model_copy(update={"region_id": survivor.id}))
+    store.db.save(survivor.model_copy(update={"bbox": BBox.union([r.bbox for r in regions])}))
+    for other in others:
+        store.db.delete(Region, where=("id", other.id))
+
+    for unit in store.db.list(TranslationUnit, where=("page_id", page_id)):
+        new_ids: list[str] = []
+        for rid in unit.ordered_region_ids:
+            mapped = survivor.id if rid in merged_ids else rid
+            if mapped not in new_ids:
+                new_ids.append(mapped)
+        if new_ids != list(unit.ordered_region_ids):
+            store.db.save(unit.model_copy(update={"ordered_region_ids": new_ids}))
+
+    _reindex(store, _page_regions_in_order(store, page_id))
+    return page_view(store, page_id)
+
+
+# -- review queue (§13.4) -----------------------------------------------------------------
+
+
+def review_queue(store: ProjectStore, *, threshold: float = DEFAULT_THRESHOLD) -> dict[str, Any]:
+    """Order every region for review with low-confidence ones first (§13.4, I-4).
+
+    Within the low-confidence group (and the rest), regions stay in page then reading order, so the
+    editor can step a reviewer straight through the work that needs attention most.
+    """
+    spans = _spans_by_region(store)
+    entries: list[dict[str, Any]] = []
+    for page in store.db.list(Page, order_by="idx"):
+        for region in _page_regions_in_order(store, page.id):
+            confidence = aggregate_confidence(region, spans.get(region.id, []))
+            entries.append(
+                {
+                    "page_id": page.id,
+                    "page_index": page.index,
+                    "region_id": region.id,
+                    "reading_order_index": region.reading_order_index,
+                    "confidence": confidence,
+                    "low_confidence": is_low_confidence(confidence, threshold=threshold),
+                    "status": region.status.value,
+                }
+            )
+    entries.sort(
+        key=lambda e: (
+            not e["low_confidence"],
+            e["page_index"],
+            e["reading_order_index"] if e["reading_order_index"] is not None else _ORDER_LAST,
+        )
+    )
+    return {"threshold": threshold, "entries": entries}
+
+
+# -- re-render preview (§13.3) ------------------------------------------------------------
+#
+# Mirror the CLI's compositing signature so the review preview and `mfo export` share one render
+# cache: an unchanged page is a no-op, while an edit (new text or moved box) invalidates only the
+# pages it touched (NFR-8).
+COMPOSITE_SIGNATURE = "composite@1"
+
+
+def _composite_adapter(base_path: Path, placements: list[PagePlacement]) -> CompositeArtifact:
+    """Bind storage's placement data to the render compositor (the same wiring the CLI uses)."""
+    return composite_file(
+        base_path,
+        [Placement(text=p.text, box=p.bbox, preset=get_preset(p.preset)) for p in placements],
+    )
+
+
+def _render_artifact(store: ProjectStore, page_id: str) -> RenderArtifact | None:
+    for artifact in store.db.list(RenderArtifact, where=("page_id", page_id)):
+        if artifact.params.get("kind") == RENDER_KIND:
+            return artifact
+    return None
+
+
+def _render_payload(store: ProjectStore, page_id: str) -> dict[str, Any]:
+    artifact = _render_artifact(store, page_id)
+    if artifact is None:
+        return {"page_id": page_id, "rendered": False, "render_url": None, "overflow": 0}
+    return {
+        "page_id": page_id,
+        "rendered": True,
+        "render_url": f"/api/pages/{page_id}/render",
+        "overflow": int(artifact.params.get("overflow", 0)),
+    }
+
+
+def rerender_page(store: ProjectStore, page_id: str) -> dict[str, Any]:
+    """Re-mask and re-composite so the edited page can be previewed (§13.3; FR-34/35).
+
+    Runs the offline mask + composite stages with the project's saved masking config; their
+    signatures mean only pages whose regions or selected text changed are actually recomputed.
+    """
+    _require_page(store, page_id)
+    config = MaskConfig(**store.project.config.get("render", {}))
+    mask_pages(
+        store,
+        mask=lambda image_path, boxes: mask_file(image_path, boxes, config),
+        signature=config.signature(),
+    )
+    composite_pages(store, composite=_composite_adapter, signature=COMPOSITE_SIGNATURE)
+    return _render_payload(store, page_id)
+
+
+def page_render_path(store: ProjectStore, page_id: str) -> Path:
+    """Filesystem path of a page's composited render, or raise if it has not been rendered yet."""
+    _require_page(store, page_id)
+    artifact = _render_artifact(store, page_id)
+    if artifact is None:
+        raise NotFoundError(f"no render for page {page_id!r}; render it first")
+    return store.layout.root / artifact.output_path

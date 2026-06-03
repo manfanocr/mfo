@@ -21,10 +21,18 @@ from mfo.storage.project import ProjectStore
 from mfo.ui.review import (
     NotFoundError,
     edit_translation,
+    merge_regions,
+    move_region,
     page_image_path,
+    page_render_path,
     page_view,
     project_summary,
+    reorder_regions,
+    rerender_page,
+    review_queue,
     select_candidate,
+    set_region_status,
+    split_region,
     unit_view,
 )
 
@@ -55,6 +63,40 @@ class CandidateSelection(BaseModel):
     editor: str = "user"
 
 
+class RegionStatusEdit(BaseModel):
+    """Body for flagging a region's review status (FR-40)."""
+
+    status: str
+
+
+class RegionBBoxEdit(BaseModel):
+    """Body for repositioning/resizing a region's bounding box (FR-38)."""
+
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+class RegionOrder(BaseModel):
+    """Body for a manual reading-order correction on a page (FR-20)."""
+
+    ordered_region_ids: list[str]
+
+
+class RegionSplit(BaseModel):
+    """Body for splitting a region into two adjacent regions (FR-39)."""
+
+    orientation: str = "horizontal"
+    ratio: float = 0.5
+
+
+class RegionMerge(BaseModel):
+    """Body for merging several regions on a page into one (FR-39)."""
+
+    region_ids: list[str]
+
+
 def create_app(store: ProjectStore) -> FastAPI:
     """Build the review API bound to an open project ``store``.
 
@@ -67,9 +109,18 @@ def create_app(store: ProjectStore) -> FastAPI:
     async def _not_found(_: Request, exc: NotFoundError) -> JSONResponse:
         return JSONResponse(status_code=404, content={"detail": str(exc)})
 
+    @app.exception_handler(ValueError)
+    async def _bad_request(_: Request, exc: ValueError) -> JSONResponse:
+        # Rejected region ops (bad status, ratio, permutation, …) are client errors, not crashes.
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+
     @app.get("/api/project")
     def get_project() -> dict[str, Any]:
         return project_summary(store)
+
+    @app.get("/api/review-queue")
+    def get_review_queue() -> dict[str, Any]:
+        return review_queue(store)
 
     @app.get("/api/pages/{page_id}")
     def get_page(page_id: str) -> dict[str, Any]:
@@ -90,6 +141,40 @@ def create_app(store: ProjectStore) -> FastAPI:
     @app.post("/api/units/{unit_id}/select")
     def post_select(unit_id: str, body: CandidateSelection) -> dict[str, Any]:
         return select_candidate(store, unit_id, body.candidate_id, editor=body.editor)
+
+    # -- region operations (§13.3/13.4; FR-20/38/39/40); each returns the refreshed page view --
+
+    @app.put("/api/regions/{region_id}/status")
+    def put_region_status(region_id: str, body: RegionStatusEdit) -> dict[str, Any]:
+        return set_region_status(store, region_id, body.status)
+
+    @app.put("/api/regions/{region_id}/bbox")
+    def put_region_bbox(region_id: str, body: RegionBBoxEdit) -> dict[str, Any]:
+        return move_region(
+            store, region_id, x=body.x, y=body.y, width=body.width, height=body.height
+        )
+
+    @app.post("/api/regions/{region_id}/split")
+    def post_region_split(region_id: str, body: RegionSplit) -> dict[str, Any]:
+        return split_region(store, region_id, orientation=body.orientation, ratio=body.ratio)
+
+    @app.post("/api/regions/merge")
+    def post_regions_merge(body: RegionMerge) -> dict[str, Any]:
+        return merge_regions(store, body.region_ids)
+
+    @app.put("/api/pages/{page_id}/order")
+    def put_page_order(page_id: str, body: RegionOrder) -> dict[str, Any]:
+        return reorder_regions(store, page_id, body.ordered_region_ids)
+
+    # -- re-render preview (§13.3) --
+
+    @app.post("/api/pages/{page_id}/render")
+    def post_page_render(page_id: str) -> dict[str, Any]:
+        return rerender_page(store, page_id)
+
+    @app.get("/api/pages/{page_id}/render")
+    def get_page_render(page_id: str) -> FileResponse:
+        return FileResponse(page_render_path(store, page_id))
 
     @app.get("/")
     def index() -> FileResponse:

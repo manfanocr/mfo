@@ -255,7 +255,7 @@ plugs into.
 - **Satisfies:** FR-36, NFR-13/14/15/16; §13.1–13.5.
 - **DoD:** Open a project, click regions, see all data, navigate by keyboard.
 
-### Batch 6.3 — In-place editing & region ops
+### Batch 6.3 — In-place editing & region ops ✅ *(landed — see CHANGELOG)*
 - **Scope:** Edit translation in place, adjust font/breaks/align/position, split/merge regions,
   status flags (correct/needs-review/ignore/manual), re-render preview, low-confidence-first
   review queue, manual reading-order correction.
@@ -303,10 +303,10 @@ plugs into.
 - [x] M0 Foundation
 - [x] M1 Import & Preprocess
 - [x] M2 Vision *(MVP scope: 2.1 detect, 2.3 OCR, 2.4 confidence; 2.2 ML detector is optional)*
-- [ ] M3 Structure
-- [ ] M4 Translation
+- [x] M3 Structure *(MVP scope: 3.1 reading order, 3.2 dialogue grouping; 3.3 panel detection is optional)*
+- [x] M4 Translation *(MVP scope: 4.1 adapter+context, 4.2 glossary/style, 4.3 mapping; 4.4 API adapter is optional)*
 - [x] M5 Render & Export
-- [ ] M6 Review Editor *(MVP complete)*
+- [x] M6 Review Editor *(MVP complete — M0–M6 satisfy the DoD §21)*
 - [ ] M7 AI Refinement
 - [ ] M8 Hardening & Stretch
 
