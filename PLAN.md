@@ -311,6 +311,29 @@ adapter-adding stretch batches (8.7, 8.9) so new providers register through one 
 needs panel detection (3.3, landed) → 8.5 *before* 8.6 (presets bundle a shared glossary) → 8.8
 needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B4, landed) → 8.11 last.
 
+### Batch 8.0 — Fused detect+recognize for det+rec engines (PaddleOCR) ✅ *(landed 2026-06-03)*
+- **Scope:** PaddleOCR runs detection **and** recognition in one model pass, yet today the `paddle`
+  detector (standalone `TextDetection`) discards the text and `mfo ocr --engine paddleocr` re-runs
+  paddle per region — paddle's recognition work happens twice. Add a fused detector `paddle-rec`
+  that runs the full pipeline once and captures the recognized text + per-box confidence onto each
+  `DetectedRegion` (new optional `text`/`text_confidence`). The detect stage persists those as
+  provisional, provenance-tagged `OCRSpan`s (new `OCRSpan.source`, I-2) and records that the page was
+  recognized; the OCR stage **adopts** them instead of re-recognizing when present
+  (`mfo ocr --reuse-detection`, default on), filling only regions that lack detection text. Keeps
+  detect and OCR as separate, restartable, separately-cached stages (I-5) — `--no-reuse-detection`
+  /`--force` (or picking a different `--engine`) still does a fresh OCR pass, so `--engine` stays
+  authoritative. As a bonus the fused path surfaces paddle's real per-box scores instead of the
+  current `0.9` detection placeholder (I-4).
+- **Satisfies:** NFR-7, NFR-8, NFR-17; FR-12, FR-13; I-2, I-4, I-5.
+- **DoD:** After `mfo detect --detector paddle-rec`, `mfo ocr` reuses the detection text with **no**
+  second paddle pass and shows real per-box confidence; `--no-reuse-detection` forces fresh OCR;
+  baseline/ML detection and the manga-ocr path are unchanged. Tested with fakes (no paddle install).
+- **Shipped:** `paddle-rec` detector (`PaddleRecDetector`, full pipeline → `DetectedRegion.text`/
+  `text_confidence`); `OCRSpan.source` provenance; detect stage persists provisional spans +
+  `detection.recognized`; `ocr_regions(reuse_detection=True)` adopts them (only OCRs gaps), with
+  `mfo ocr --reuse-detection/--no-reuse-detection`; `get_detector(..., lang=)`; USER_GUIDE +
+  CHANGELOG. See CHANGELOG.
+
 ### Batch 8.1 — Parallel processing & performance tuning
 - **Scope:** Process pages concurrently across the heavy stages (detect/OCR/translate/render) with a
   configurable worker count (`--jobs`); a small profiling/benchmark harness; cache-key audit so
@@ -419,7 +442,7 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
 - [x] M5 Render & Export
 - [x] M6 Review Editor *(MVP complete — M0–M6 satisfy the DoD §21)*
 - [x] M7 AI Refinement *(7.1 assist adapter, 7.2 modes, 7.3 confidence-driven review)*
-- [ ] M8 Hardening & Stretch *(planned into batches 8.1–8.11; none started)*
+- [ ] M8 Hardening & Stretch *(planned into batches 8.0–8.11; 8.0 fused detect+recognize landed)*
 
 When a batch lands: tick it, and append a dated entry to [CHANGELOG.md](CHANGELOG.md) with the
 spec IDs it satisfied.

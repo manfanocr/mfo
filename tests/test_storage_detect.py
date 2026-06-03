@@ -7,8 +7,8 @@ from pathlib import Path
 
 from PIL import Image
 
-from mfo.core import Page, Project, Region
-from mfo.core.enums import RegionType
+from mfo.core import OCRSpan, Page, Project, Region
+from mfo.core.enums import RegionStatus, RegionType
 from mfo.core.geometry import BBox
 from mfo.storage import ProjectStore, detect_regions, import_pages
 from mfo.vision import DetectedRegion
@@ -85,3 +85,59 @@ def test_detector_change_recomputes(tmp_path: Path) -> None:
         rerun = detect_regions(store, detect=_stub(_ONE, _ONE), signature="other@2")
         assert len(rerun) == 2  # different detector id → fresh detection
         assert len(store.db.list(Region)) == 2
+
+
+# -- det+rec detectors: recognition captured as provisional OCR spans (batch 8.0) ----------
+
+
+def _rec(text: str, *, confidence: float | None = 0.8, status: RegionStatus = RegionStatus.AUTO):
+    return DetectedRegion(
+        bbox=BBox(x=1, y=2, width=5, height=6),
+        type=RegionType.UNKNOWN,
+        confidence=0.9,
+        status=status,
+        text=text,
+        text_confidence=confidence,
+    )
+
+
+def test_detection_text_persisted_as_provisional_span(tmp_path: Path) -> None:
+    store = _project_with_page(tmp_path / "proj", tmp_path / "src")
+    with store:
+        detect_regions(store, detect=_stub(_rec("こんにちは")), signature="paddle-rec@1")
+        region = store.db.list(Region)[0]
+        spans = store.db.list(OCRSpan, where=("region_id", region.id))
+        assert len(spans) == 1
+        assert spans[0].text == "こんにちは"
+        assert spans[0].confidence == 0.8
+        assert spans[0].source == "paddle-rec@1"  # provenance recorded (I-2)
+        assert store.db.list(Page)[0].detection["recognized"] is True
+
+
+def test_detection_without_text_records_no_spans(tmp_path: Path) -> None:
+    # A detection-only detector (no text) leaves OCR to the OCR stage.
+    store = _project_with_page(tmp_path / "proj", tmp_path / "src")
+    with store:
+        detect_regions(store, detect=_stub(_ONE), signature="baseline-cc@1")
+        assert store.db.list(OCRSpan) == []
+        assert store.db.list(Page)[0].detection["recognized"] is False
+
+
+def test_ignored_box_text_is_not_recorded(tmp_path: Path) -> None:
+    store = _project_with_page(tmp_path / "proj", tmp_path / "src")
+    with store:
+        detect_regions(
+            store, detect=_stub(_rec("x", status=RegionStatus.IGNORE)), signature="paddle-rec@1"
+        )
+        assert store.db.list(OCRSpan) == []
+        assert store.db.list(Page)[0].detection["recognized"] is False
+
+
+def test_redetection_clears_prior_provisional_spans(tmp_path: Path) -> None:
+    store = _project_with_page(tmp_path / "proj", tmp_path / "src")
+    with store:
+        detect_regions(store, detect=_stub(_rec("first")), signature="paddle-rec@1")
+        detect_regions(store, detect=_stub(_rec("second")), signature="other@2", force=True)
+        spans = store.db.list(OCRSpan)
+        assert len(spans) == 1  # the stale span from the first pass was cleared, not orphaned
+        assert spans[0].text == "second"

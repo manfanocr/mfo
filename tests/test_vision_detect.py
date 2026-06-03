@@ -27,7 +27,9 @@ from mfo.vision.detect import (
     MLDetectorConfig,
     OnnxDetectionModel,
     PaddleDetector,
+    PaddleRecDetector,
     _paddle_boxes,
+    _paddle_rec_items,
     classify_region,
     decode_detections,
     default_model_dir,
@@ -36,6 +38,7 @@ from mfo.vision.detect import (
     ml_detector,
     non_max_suppression,
     paddle_detector,
+    paddle_rec_detector,
 )
 
 _ONNXRUNTIME_INSTALLED = importlib.util.find_spec("onnxruntime") is not None
@@ -295,6 +298,70 @@ def test_paddle_falls_back_to_baseline_when_unavailable(monkeypatch: pytest.Monk
     _break_paddle(monkeypatch)
     regions = paddle_detector().detect(_page_with_blocks())
     assert len(regions) == 3
+
+
+# -- fused detect+recognize detector (paddle-rec; batch 8.0) -------------------------------
+
+
+def _break_paddle_full(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force the full PaddleOCR pipeline unavailable (for the fused paddle-rec detector)."""
+    if _PADDLEOCR_INSTALLED:
+        import paddleocr
+
+        def _boom(*args: object, **kwargs: object) -> object:
+            raise RuntimeError("paddlepaddle backend is not installed")
+
+        monkeypatch.setattr(paddleocr, "PaddleOCR", _boom)
+
+
+def test_get_detector_resolves_paddle_rec_to_a_fallback_detector() -> None:
+    assert isinstance(get_detector("paddle-rec"), FallbackDetector)
+    assert isinstance(paddle_rec_detector(), FallbackDetector)
+
+
+def test_paddle_rec_items_flattens_full_pipeline_results() -> None:
+    # PaddleOCR.predict() returns one result per image carrying parallel rec_polys/rec_texts/
+    # rec_scores; we pair them into (polygon, text, score), dropping ragged/non-string entries.
+    raw = [
+        {
+            "rec_polys": [
+                np.array([[0, 0], [9, 0], [9, 9], [0, 9]]),
+                np.array([[1, 1], [5, 1], [5, 5], [1, 5]]),
+            ],
+            "rec_texts": ["hello", "world"],
+            "rec_scores": [0.9, 0.7],
+        }
+    ]
+    items = _paddle_rec_items(raw)
+    assert items == [
+        ([(0.0, 0.0), (9.0, 0.0), (9.0, 9.0), (0.0, 9.0)], "hello", 0.9),
+        ([(1.0, 1.0), (5.0, 1.0), (5.0, 5.0), (1.0, 5.0)], "world", 0.7),
+    ]
+    # Falls back to dt_polys, tolerates a missing score, and ignores detection-only results.
+    square = np.array([[0, 0], [2, 0], [2, 2], [0, 2]])
+    fallback = _paddle_rec_items([{"dt_polys": [square], "rec_texts": ["x"]}])
+    assert fallback == [([(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0)], "x", None)]
+    assert _paddle_rec_items([{"dt_polys": [np.array([[0, 0], [2, 0], [2, 2]])]}]) == []
+    assert _paddle_rec_items(None) == []
+
+
+def test_paddle_rec_detector_reports_missing_dependency_clearly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _break_paddle_full(monkeypatch)
+    with pytest.raises(DetectorDependencyError, match="pip install"):
+        PaddleRecDetector().detect(np.zeros((10, 10, 3), dtype=np.uint8))
+
+
+def test_paddle_rec_falls_back_to_baseline_when_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Like "paddle", the fused detector wraps a baseline fallback so a missing backend never
+    # hard-fails; the fallback yields no recognition text, so the OCR stage runs normally.
+    _break_paddle_full(monkeypatch)
+    regions = paddle_rec_detector(lang="ja").detect(_page_with_blocks())
+    assert len(regions) == 3
+    assert all(region.text is None for region in regions)
 
 
 def test_default_model_dir_honors_env_override(monkeypatch: pytest.MonkeyPatch) -> None:

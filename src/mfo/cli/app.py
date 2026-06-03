@@ -258,7 +258,9 @@ def detect(
     path: Annotated[Path, typer.Argument(help="Project directory.")],
     detector: Annotated[
         str,
-        typer.Option("--detector", help="Region detector: 'baseline', 'ml', or 'paddle'."),
+        typer.Option(
+            "--detector", help="Region detector: 'baseline', 'ml', 'paddle', or 'paddle-rec'."
+        ),
     ] = "baseline",
     force: Annotated[
         bool, typer.Option("--force", help="Re-detect even if a current result is cached.")
@@ -268,16 +270,17 @@ def detect(
 
     The default 'baseline' detector is offline and needs no model download; 'ml' uses a trained
     detector when available (pip install 'mfo[detect]') and 'paddle' uses PaddleOCR's text detector
-    (pip install 'mfo[ocr-paddle]'). Both transparently fall back to the baseline if their
-    dependency or model is absent.
+    (pip install 'mfo[ocr-paddle]'). 'paddle-rec' runs PaddleOCR's full detect+recognize pipeline so
+    `mfo ocr` can reuse its text without a second pass. All transparently fall back to the baseline
+    if their dependency or model is absent.
     """
-    try:
-        engine = get_detector(detector)
-    except ValueError as exc:
-        typer.secho(str(exc), fg=typer.colors.RED, err=True)
-        raise typer.Exit(code=1) from None
-    signature = f"{engine.name}@{engine.version}"
     with _open_store(path) as store:
+        try:
+            engine = get_detector(detector, lang=store.project.source_lang)
+        except ValueError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from None
+        signature = f"{engine.name}@{engine.version}"
         save_detect_config(store, detector)
         regions = detect_regions(
             store,
@@ -304,11 +307,24 @@ def detect(
 def ocr(
     path: Annotated[Path, typer.Argument(help="Project directory.")],
     engine: Annotated[str, typer.Option("--engine", help="OCR engine to use.")] = "manga-ocr",
+    reuse_detection: Annotated[
+        bool,
+        typer.Option(
+            "--reuse-detection/--no-reuse-detection",
+            help="Reuse text recognized during detection (e.g. by 'paddle-rec') instead of "
+            "re-running OCR; --no-reuse-detection recognizes everything with --engine.",
+        ),
+    ] = True,
     force: Annotated[
         bool, typer.Option("--force", help="Re-run OCR even if a current result is cached.")
     ] = False,
 ) -> None:
-    """Recognize text on detected regions (default engine manga-ocr — install with mfo[ocr])."""
+    """Recognize text on detected regions (default engine manga-ocr — install with mfo[ocr]).
+
+    If detection used a det+rec detector (`mfo detect --detector paddle-rec`), the recognized text
+    is reused by default and only regions without it are OCR'd; pass --no-reuse-detection to
+    recognize everything with --engine.
+    """
     with _open_store(path) as store:
         try:
             ocr_engine = get_ocr_engine(engine, lang=store.project.source_lang)
@@ -322,12 +338,20 @@ def ocr(
                 store,
                 recognize=lambda image_path, bbox: recognize_file(image_path, bbox, ocr_engine),
                 signature=signature,
+                reuse_detection=reuse_detection,
                 force=force,
             )
         except OcrDependencyError as exc:
             typer.secho(str(exc), fg=typer.colors.RED, err=True)
             raise typer.Exit(code=1) from None
-    typer.secho(f"Recognized {len(spans)} region(s).", fg=typer.colors.GREEN)
+        reused = sum(int(page.ocr.get("reused", 0)) for page in store.db.list(Page))
+    if reused:
+        typer.secho(
+            f"Recognized {len(spans)} region(s); {reused} reused from detection.",
+            fg=typer.colors.GREEN,
+        )
+    else:
+        typer.secho(f"Recognized {len(spans)} region(s).", fg=typer.colors.GREEN)
 
 
 @app.command()

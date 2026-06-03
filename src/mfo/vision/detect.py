@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import urllib.request
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -49,6 +49,12 @@ class DetectedRegion:
     type: RegionType
     confidence: float
     status: RegionStatus = RegionStatus.AUTO
+    # Best-effort recognition from a det+rec detector (e.g. PaddleOCR's full pipeline). Left
+    # ``None`` by detection-only detectors; when present the detect stage records it as a
+    # provisional OCR span the OCR stage can adopt instead of re-recognizing (batch 8.0).
+    # Uncertainty stays visible (I-4).
+    text: str | None = None
+    text_confidence: float | None = None
 
 
 class RegionDetector(Protocol):
@@ -163,7 +169,7 @@ class ConnectedComponentsDetector:
         return regions
 
 
-def baseline_detector() -> RegionDetector:
+def baseline_detector(lang: str | None = None) -> RegionDetector:
     return ConnectedComponentsDetector()
 
 
@@ -451,7 +457,9 @@ class FallbackDetector:
         return regions
 
 
-def ml_detector(config: MLDetectorConfig | None = None) -> RegionDetector:
+def ml_detector(
+    config: MLDetectorConfig | None = None, *, lang: str | None = None
+) -> RegionDetector:
     """The ML detector with a transparent baseline fallback (the ``"ml"`` config name)."""
     return FallbackDetector(MLDetector(config), ConnectedComponentsDetector())
 
@@ -545,26 +553,150 @@ class PaddleDetector:
         return regions
 
 
-def paddle_detector() -> RegionDetector:
+def paddle_detector(lang: str | None = None) -> RegionDetector:
     """The PaddleOCR text detector with a transparent baseline fallback (the ``"paddle"`` name)."""
     return FallbackDetector(PaddleDetector(), ConnectedComponentsDetector())
 
 
-_FACTORIES = {
+# --- Fused PaddleOCR detect+recognize adapter (FR-12; NFR-7/8/17; I-4) ------------------------
+#
+# PaddleOCR's full pipeline detects *and* recognizes in one pass, so when paddle is used for both
+# stages, recognizing again in the OCR stage repeats work. This detector runs that pipeline once and
+# carries the recognized text + per-box score on each region; the detect/OCR storage stages then
+# let the OCR stage adopt the text instead of re-running paddle (batch 8.0). Optional + lazy like
+# the others; falls back to the baseline (which yields no text, so OCR runs normally) if paddle is
+# absent.
+
+
+def _paddle_rec_items(raw: object) -> list[tuple[list[Any], str, float | None]]:
+    """Flatten PaddleOCR 3.x full-pipeline output into ``(polygon, text, score)`` triples.
+
+    ``PaddleOCR.predict`` returns one dict-like result per image carrying parallel ``rec_polys``
+    (or ``dt_polys``), ``rec_texts`` and ``rec_scores``. We stay tolerant of shape (missing keys,
+    ragged lengths, non-string text) so a malformed result is ignored rather than crashing.
+    """
+    if not raw:
+        return []
+    results: list[Any] = raw if isinstance(raw, list) else [raw]
+    items: list[tuple[list[Any], str, float | None]] = []
+    for result in results:
+        polys: Any = None
+        for key in ("rec_polys", "dt_polys"):
+            try:
+                polys = result[key]
+            except (KeyError, TypeError, IndexError):
+                continue
+            if polys is not None:
+                break
+        if polys is None:
+            continue
+        try:
+            texts = list(result["rec_texts"])
+        except (KeyError, TypeError, IndexError):
+            continue
+        try:
+            scores = list(result["rec_scores"])
+        except (KeyError, TypeError, IndexError):
+            scores = []
+        for i, poly in enumerate(polys):
+            if i >= len(texts) or not isinstance(texts[i], str):
+                continue
+            points = [(float(p[0]), float(p[1])) for p in poly if len(p) >= 2]
+            if len(points) < 3:
+                continue
+            score = scores[i] if i < len(scores) else None
+            items.append((points, texts[i], float(score) if score is not None else None))
+    return items
+
+
+class PaddleRecDetector:
+    """PaddleOCR full pipeline (detect **and** recognize) as a detector, capturing text per box.
+
+    Each returned :class:`DetectedRegion` carries the recognized ``text`` and ``text_confidence``
+    so the OCR stage can reuse it (batch 8.0). Raises :class:`DetectorDependencyError` (caught by
+    :class:`FallbackDetector`) when paddle or its ``paddlepaddle`` backend is unavailable.
+    """
+
+    name = "paddle-rec"
+    version = "1"
+
+    def __init__(self, lang: str | None = None) -> None:
+        from mfo.vision.ocr import _PADDLE_LANG
+
+        code = (lang or "ja").lower()
+        self._lang = _PADDLE_LANG.get(code, code)
+        self._model: Any = None
+
+    def _ensure_model(self) -> Any:
+        if self._model is None:
+            _prefer_paddle_cpu_runtime()
+            try:
+                from paddleocr import PaddleOCR
+            except ImportError as exc:  # optional dependency not installed
+                raise DetectorDependencyError(
+                    "paddleocr is not installed; install it with:  pip install 'mfo[ocr-paddle]'"
+                ) from exc
+            try:
+                self._model = PaddleOCR(
+                    lang=self._lang,
+                    use_doc_orientation_classify=False,
+                    use_doc_unwarping=False,
+                    use_textline_orientation=False,
+                )
+            except Exception as exc:  # missing paddlepaddle backend, bad lang, etc.
+                raise DetectorDependencyError(
+                    "PaddleOCR could not initialize; install its inference backend with: "
+                    " pip install 'mfo[ocr-paddle]'"
+                ) from exc
+        return self._model
+
+    def detect(self, image: Uint8Array) -> list[DetectedRegion]:
+        model = self._ensure_model()
+        regions: list[DetectedRegion] = []
+        for points, text, score in _paddle_rec_items(model.predict(image)):
+            xs = [p[0] for p in points]
+            ys = [p[1] for p in points]
+            x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
+            if x1 - x0 < 1.0 or y1 - y0 < 1.0:
+                continue
+            regions.append(
+                DetectedRegion(
+                    bbox=BBox(x=x0, y=y0, width=x1 - x0, height=y1 - y0),
+                    type=RegionType.UNKNOWN,
+                    confidence=score if score is not None else 0.9,
+                    text=text,
+                    text_confidence=score,
+                )
+            )
+        regions.sort(key=lambda r: (r.bbox.y, r.bbox.x))
+        return regions
+
+
+def paddle_rec_detector(lang: str | None = None) -> RegionDetector:
+    """Fused PaddleOCR detect+recognize with a baseline fallback (the ``"paddle-rec"`` name)."""
+    return FallbackDetector(PaddleRecDetector(lang=lang), ConnectedComponentsDetector())
+
+
+_FACTORIES: dict[str, Callable[..., RegionDetector]] = {
     "baseline": baseline_detector,
     "ml": ml_detector,
     "paddle": paddle_detector,
+    "paddle-rec": paddle_rec_detector,
 }
 
 
-def get_detector(name: str = "baseline") -> RegionDetector:
-    """Resolve a detector by config name (NFR-17). Raises ``ValueError`` if unknown."""
+def get_detector(name: str = "baseline", *, lang: str | None = None) -> RegionDetector:
+    """Resolve a detector by config name (NFR-17). Raises ``ValueError`` if unknown.
+
+    ``lang`` (the project's source language) is forwarded to detectors that recognize text (the
+    fused ``paddle-rec``); detection-only detectors ignore it.
+    """
     try:
         factory = _FACTORIES[name]
     except KeyError:
         known = ", ".join(sorted(_FACTORIES))
         raise ValueError(f"unknown detector {name!r}; available: {known}") from None
-    return factory()
+    return factory(lang=lang)
 
 
 def detect_file(path: Path, detector: RegionDetector) -> list[DetectedRegion]:

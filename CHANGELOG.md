@@ -8,6 +8,25 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 
 ## [Unreleased]
 
+### M8 — Hardening & Stretch
+
+#### Added — Batch 8.0: Fused detect+recognize for det+rec engines (2026-06-03)
+- **`paddle-rec` detector — PaddleOCR detect+recognize in one pass, reused by OCR.** PaddleOCR
+  recognizes while it detects, so using `--detector paddle` then `--engine paddleocr` ran paddle's
+  recognition twice. The new `paddle-rec` detector (`PaddleRecDetector`) runs the full pipeline once
+  and carries the recognized text + **real per-box confidence** on each `DetectedRegion` (new
+  optional `text`/`text_confidence`; replaces the `0.9` placeholder for these boxes — I-4). The
+  detect stage persists that as a provisional, provenance-tagged span (new `OCRSpan.source`, I-2)
+  and records `detection.recognized`; `ocr_regions(reuse_detection=True)` then **adopts** those
+  spans, recognizing only regions that lack detection text — so `mfo ocr` does no second paddle pass.
+  Detect and OCR stay separate, restartable, separately-cached stages (I-5): `mfo ocr
+  --no-reuse-detection` (or `--force`, or a different `--engine`) recognizes everything with the
+  chosen engine, keeping `--engine` authoritative. `get_detector` now takes `lang=` (forwarded to
+  recognizing detectors; detection-only ones ignore it) and `mfo run` threads the project source
+  language into both detect and OCR. Re-detection clears prior provisional spans (no orphans).
+  Tested entirely with fakes — no paddle install required. Documented in `docs/USER_GUIDE.md`.
+  (FR-12, FR-13; NFR-7, NFR-8, NFR-17; I-2, I-4, I-5)
+
 ### M7 — AI-Assisted Refinement
 
 #### Added — Batch 7.3: Confidence-driven review integration (2026-06-03)

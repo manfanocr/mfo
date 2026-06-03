@@ -53,9 +53,18 @@ def ocr_regions(
     *,
     recognize: Recognize,
     signature: str,
+    reuse_detection: bool = True,
     force: bool = False,
 ) -> list[OCRSpan]:
-    """OCR every region on every page, persisting spans + a per-page signature. Returns new ones."""
+    """OCR every region on every page, persisting spans + a per-page signature. Returns new ones.
+
+    When ``reuse_detection`` and a page was recognized by a det+rec detector (it carries provisional
+    spans stamped with the detector's id, batch 8.0), those spans are **adopted** instead of running
+    ``recognize`` again — only regions without detection text are recognized. Passing
+    ``reuse_detection=False`` (or ``force``) ignores them and recognizes everything with the given
+    engine, so an explicit OCR engine stays authoritative. The returned list is the spans newly
+    produced by ``recognize`` this run (adopted detection spans are not "new").
+    """
     created: list[OCRSpan] = []
     for page in store.db.list(Page, order_by="idx"):
         regions = store.db.list(Region, where=("page_id", page.id))
@@ -64,9 +73,16 @@ def ocr_regions(
         # Regions auto-marked IGNORE (panel/frame blobs) are not real text; skip OCR for them.
         eligible = [region for region in regions if region.status is not RegionStatus.IGNORE]
 
+        # Adopt detection-provided OCR only when asked, the detector recognized text, and we know
+        # which detector's spans to trust (so a prior OCR-stage run is never mistaken for it).
+        detector_id = page.detection.get("detector")
+        adopt = reuse_detection and bool(page.detection.get("recognized")) and bool(detector_id)
+
         original = store.layout.root / page.image_path
         source_hash = sha256_file(original)
-        page_signature = content_key(source_hash, f"{signature}|{_regions_fingerprint(regions)}")
+        page_signature = content_key(
+            source_hash, f"{signature}|reuse={adopt}|{_regions_fingerprint(regions)}"
+        )
 
         current = page.ocr
         existing = [
@@ -81,29 +97,47 @@ def ocr_regions(
         ):
             continue
 
-        # Recompute (forced or stale): drop any prior spans so none are orphaned.
+        # Recompute (forced or stale): clear spans on ignored regions outright, and on eligible
+        # regions clear everything except a detection span we're adopting, so none are orphaned.
         for region in regions:
-            store.db.delete(OCRSpan, where=("region_id", region.id))
-        spans = [
-            OCRSpan(
+            if region.status is RegionStatus.IGNORE:
+                for span in store.db.list(OCRSpan, where=("region_id", region.id)):
+                    store.db.delete(OCRSpan, where=("id", span.id))
+
+        new_spans: list[OCRSpan] = []
+        reused = 0
+        for region in eligible:
+            region_spans = store.db.list(OCRSpan, where=("region_id", region.id))
+            adopted = (
+                next((s for s in region_spans if s.source == detector_id), None) if adopt else None
+            )
+            for span in region_spans:
+                if adopted is None or span.id != adopted.id:
+                    store.db.delete(OCRSpan, where=("id", span.id))
+            if adopted is not None:
+                reused += 1
+                continue
+            result = recognize(original, region.bbox)
+            span = OCRSpan(
                 region_id=region.id,
                 text=result.text,
                 confidence=result.confidence,
                 alternatives=list(result.alternatives),
+                source=signature,
             )
-            for region in eligible
-            for result in (recognize(original, region.bbox),)
-        ]
-        store.db.save_all(spans)
+            store.db.save(span)
+            new_spans.append(span)
+
         new_page = page.model_copy(
             update={
                 "ocr": {
                     "signature": page_signature,
                     "engine": signature,
-                    "count": len(spans),
+                    "count": len(eligible),
+                    "reused": reused,
                 }
             }
         )
         store.db.save(new_page)
-        created.extend(spans)
+        created.extend(new_spans)
     return created

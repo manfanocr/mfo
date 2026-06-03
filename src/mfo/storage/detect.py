@@ -13,7 +13,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Protocol
 
-from mfo.core import Page, Region
+from mfo.core import OCRSpan, Page, Region
 from mfo.core.enums import RegionStatus, RegionType
 from mfo.core.geometry import BBox
 from mfo.storage.hashing import content_key, sha256_file
@@ -21,7 +21,12 @@ from mfo.storage.project import ProjectStore
 
 
 class RegionCandidate(Protocol):
-    """The minimum a detected region must expose to be persisted."""
+    """The minimum a detected region must expose to be persisted.
+
+    A *det+rec* detector may also expose ``text``/``text_confidence`` (read defensively, like
+    ``status``); when present the region's recognition is recorded as a provisional OCR span the OCR
+    stage can adopt (batch 8.0).
+    """
 
     @property
     def bbox(self) -> BBox: ...
@@ -58,11 +63,17 @@ def detect_regions(
         ):
             continue
 
-        # Recompute (forced or stale): drop any prior regions so none are orphaned.
+        # Recompute (forced or stale): drop any prior regions (and their spans, so none are
+        # orphaned) before re-detecting.
+        for prior in store.db.list(Region, where=("page_id", page.id)):
+            store.db.delete(OCRSpan, where=("region_id", prior.id))
         store.db.delete(Region, where=("page_id", page.id))
+
         candidates = detect(original)
-        regions = [
-            Region(
+        regions: list[Region] = []
+        spans: list[OCRSpan] = []
+        for candidate in candidates:
+            region = Region(
                 page_id=page.id,
                 bbox=candidate.bbox,
                 type=candidate.type,
@@ -70,15 +81,30 @@ def detect_regions(
                 # A detector may flag a doubtful box for review; default AUTO if it doesn't.
                 status=getattr(candidate, "status", RegionStatus.AUTO),
             )
-            for candidate in candidates
-        ]
+            regions.append(region)
+            # A det+rec detector also hands back recognized text: store it as a provisional,
+            # provenance-stamped span (skipping boxes it marked IGNORE) for the OCR stage to adopt.
+            text = getattr(candidate, "text", None)
+            if text is not None and region.status is not RegionStatus.IGNORE:
+                spans.append(
+                    OCRSpan(
+                        region_id=region.id,
+                        text=text,
+                        confidence=getattr(candidate, "text_confidence", None),
+                        source=signature,
+                    )
+                )
         store.db.save_all(regions)
+        store.db.save_all(spans)
         new_page = page.model_copy(
             update={
                 "detection": {
                     "signature": page_signature,
                     "detector": signature,
                     "count": len(regions),
+                    # Whether this detector also recognized text, so the OCR stage knows it can
+                    # adopt the provisional spans above instead of re-recognizing (batch 8.0).
+                    "recognized": bool(spans),
                 }
             }
         )

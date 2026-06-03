@@ -455,7 +455,13 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
         stages.append(PreprocessStage(PreprocessConfig(**preprocess_config)))
 
         detect_config = config.get("detect") or {}
-        stages.append(DetectStage(get_detector(detect_config.get("detector", "baseline"))))
+        stages.append(
+            DetectStage(
+                get_detector(
+                    detect_config.get("detector", "baseline"), lang=store.project.source_lang
+                )
+            )
+        )
 
         structure_config = config.get("structure") or {}
         direction = ReadingDirection(
@@ -473,7 +479,13 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
 
         ocr_config = config.get("ocr")
         if ocr_config is not None:
-            stages.append(OcrStage(get_ocr_engine(ocr_config.get("engine", "manga-ocr"))))
+            stages.append(
+                OcrStage(
+                    get_ocr_engine(
+                        ocr_config.get("engine", "manga-ocr"), lang=store.project.source_lang
+                    )
+                )
+            )
 
             # Translation depends on OCR, so it only joins once OCR is configured too.
             translate_config = config.get("translate")

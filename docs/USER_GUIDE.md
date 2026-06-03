@@ -189,16 +189,43 @@ dependency is missing. `paddleocr` picks its model from the project's `--source`
 |------|--------------|---------|
 | `baseline` *(default)* | OpenCV connected-components; no model download | built in |
 | `paddle` | PaddleOCR's text-detection model (tight text boxes) | `pip install 'mfo[ocr-paddle]'` |
+| `paddle-rec` | PaddleOCR **detect + recognize** in one pass; `mfo ocr` reuses the text | `pip install 'mfo[ocr-paddle]'` |
 | `ml` | a trained bubble/text detector (ONNX) | `pip install 'mfo[detect]'` + a model |
 
 ```bash
-mfo detect <proj>                    # baseline (offline, zero setup)
-mfo detect <proj> --detector paddle  # text-box detector; falls back to baseline if absent
-mfo detect <proj> --detector ml      # trained detector; falls back to baseline if absent
+mfo detect <proj>                       # baseline (offline, zero setup)
+mfo detect <proj> --detector paddle     # text-box detector; falls back to baseline if absent
+mfo detect <proj> --detector paddle-rec # detect + recognize; OCR reuses the text (see below)
+mfo detect <proj> --detector ml         # trained detector; falls back to baseline if absent
 ```
 
-Both `paddle` and `ml` transparently fall back to the baseline if their dependency or model isn't
-available, so detection never hard-fails.
+`paddle`, `paddle-rec` and `ml` all transparently fall back to the baseline if their dependency or
+model isn't available, so detection never hard-fails.
+
+### `paddle-rec` — recognize during detection (skip a second OCR pass)
+
+PaddleOCR detects *and* recognizes text in one model pass, so running its OCR again per region just
+repeats work. The `paddle-rec` detector captures the recognized text (with real per-box confidence)
+while detecting; `mfo ocr` then **reuses** it instead of re-running OCR:
+
+```bash
+pip install 'mfo[ocr-paddle]'
+mfo detect <proj> --detector paddle-rec   # boxes + text in one pass
+mfo ocr <proj>                            # reuses the detection text — no second paddle pass
+mfo translate <proj>
+```
+
+`mfo ocr` reuses detection text by default and only OCRs regions that lack it. To recognize
+everything with a specific engine instead — making `--engine` authoritative — pass
+`--no-reuse-detection` (or `--force`):
+
+```bash
+mfo ocr <proj> --engine manga-ocr --no-reuse-detection   # ignore detection text; use manga-ocr
+```
+
+Regions you redraw or split in `mfo review` no longer match the detected text, so they're re-OCR'd
+on demand there as usual. Detection-provided text is recorded with its provenance, so it's fully
+traceable and editable like any OCR.
 
 **Baseline note:** the baseline can't tell a speech bubble from a panel, so blobs that are oversized
 or span most of the page width are auto-marked **ignore** (kept in the data, but skipped by OCR,

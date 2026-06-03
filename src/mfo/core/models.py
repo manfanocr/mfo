@@ -105,6 +105,10 @@ class OCRSpan(MfoModel):
     confidence: float | None = None
     alternatives: list[str] = Field(default_factory=list)
     token_offsets: list[tuple[int, int]] | None = None
+    # Provenance: the engine/detector id that produced this span (I-2). Empty for legacy spans; set
+    # to the detector signature when OCR is captured during detection (a det+rec engine), so the OCR
+    # stage can tell detection-provided text from an OCR-stage run and adopt it (batch 8.0).
+    source: str = ""
 
 
 class TranslationCandidate(MfoModel):

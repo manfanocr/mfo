@@ -110,6 +110,81 @@ def test_page_without_regions_is_skipped(tmp_path: Path) -> None:
         assert store.db.list(OCRSpan) == []
 
 
+# -- adopting detection-provided OCR from a det+rec detector (batch 8.0) -------------------
+
+
+def _recognized_project(root: Path, source: Path, *, texts: list[str | None]) -> ProjectStore:
+    """A project whose page was 'recognized' by a det+rec detector, with provisional spans.
+
+    ``texts[i]`` is the detection text for region ``i`` (``None`` → that region got no detection
+    text, so the OCR stage must still recognize it).
+    """
+    store = _project_with_regions(root, source, regions=len(texts))
+    page = store.db.list(Page)[0]
+    store.db.save(
+        page.model_copy(update={"detection": {"detector": "paddle-rec@1", "recognized": True}})
+    )
+    for region, text in zip(store.db.list(Region, where=("page_id", page.id)), texts, strict=True):
+        if text is not None:
+            store.db.save(
+                OCRSpan(region_id=region.id, text=text, confidence=0.8, source="paddle-rec@1")
+            )
+    return store
+
+
+def test_reuses_detection_text_without_recognizing(tmp_path: Path) -> None:
+    store = _recognized_project(tmp_path / "proj", tmp_path / "src", texts=["あ", "い"])
+    calls: list[Path] = []
+
+    def recognize(path: Path, bbox: BBox) -> RecognizedText:
+        calls.append(path)
+        return RecognizedText(text="SHOULD-NOT-RUN")
+
+    with store:
+        created = ocr_regions(store, recognize=recognize, signature="manga-ocr@1")
+        assert calls == []  # detection text adopted; the engine never ran
+        assert created == []  # nothing newly recognized
+        assert {s.text for s in store.db.list(OCRSpan)} == {"あ", "い"}
+        assert store.db.list(Page)[0].ocr["reused"] == 2
+
+
+def test_no_reuse_detection_reocrs_everything(tmp_path: Path) -> None:
+    store = _recognized_project(tmp_path / "proj", tmp_path / "src", texts=["あ", "い"])
+    with store:
+        created = ocr_regions(
+            store, recognize=_recognizer("ENGINE"), signature="manga-ocr@1", reuse_detection=False
+        )
+        assert len(created) == 2  # explicit engine wins; both regions re-OCR'd
+        assert {s.text for s in store.db.list(OCRSpan)} == {"ENGINE"}
+        assert store.db.list(Page)[0].ocr["reused"] == 0
+
+
+def test_adopts_present_recognizes_missing(tmp_path: Path) -> None:
+    # One region has detection text, the other doesn't → adopt one, recognize the other.
+    store = _recognized_project(tmp_path / "proj", tmp_path / "src", texts=["あ", None])
+    calls: list[Path] = []
+
+    def recognize(path: Path, bbox: BBox) -> RecognizedText:
+        calls.append(path)
+        return RecognizedText(text="filled")
+
+    with store:
+        created = ocr_regions(store, recognize=recognize, signature="manga-ocr@1")
+        assert len(calls) == 1  # only the region lacking detection text
+        assert len(created) == 1
+        assert {s.text for s in store.db.list(OCRSpan)} == {"あ", "filled"}
+        assert store.db.list(Page)[0].ocr["reused"] == 1
+
+
+def test_reuse_is_idempotent(tmp_path: Path) -> None:
+    store = _recognized_project(tmp_path / "proj", tmp_path / "src", texts=["あ", "い"])
+    with store:
+        ocr_regions(store, recognize=_recognizer(), signature="manga-ocr@1")
+        again = ocr_regions(store, recognize=_recognizer(), signature="manga-ocr@1")
+        assert again == []  # unchanged page is skipped (NFR-8)
+        assert len(store.db.list(OCRSpan)) == 2
+
+
 def test_ignored_regions_are_skipped(tmp_path: Path) -> None:
     # Auto-ignored panel/frame blobs must not be OCR'd (item 11); only eligible regions get spans.
     store = _project_with_regions(tmp_path / "proj", tmp_path / "src", regions=1)
