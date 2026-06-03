@@ -51,7 +51,7 @@ from mfo.render import (
     get_preset,
     mask_file,
 )
-from mfo.storage import RENDER_KIND, composite_pages, mask_pages
+from mfo.storage import RENDER_KIND, composite_pages, history, mask_pages
 from mfo.storage.edits import list_edits, record_edit
 from mfo.storage.ocr import Recognize
 from mfo.storage.project import ProjectStore
@@ -268,32 +268,33 @@ def edit_translation(
     machine candidates stay as alternatives the user can revert to.
     """
     unit = _require_unit(store, unit_id)
-    before = selected_text(unit)
+    with history.record(store, unit.page_id, "edit_translation", editor=editor):
+        before = selected_text(unit)
 
-    selected = next((c for c in unit.candidates if c.id == unit.selected_candidate_id), None)
-    if selected is not None and selected.kind is CandidateKind.MANUAL:
-        candidates = [
-            c.model_copy(update={"text": text}) if c.id == selected.id else c
-            for c in unit.candidates
-        ]
-        selected_id = selected.id
-    else:
-        manual = TranslationCandidate(text=text, kind=CandidateKind.MANUAL)
-        candidates = [*unit.candidates, manual]
-        selected_id = manual.id
+        selected = next((c for c in unit.candidates if c.id == unit.selected_candidate_id), None)
+        if selected is not None and selected.kind is CandidateKind.MANUAL:
+            candidates = [
+                c.model_copy(update={"text": text}) if c.id == selected.id else c
+                for c in unit.candidates
+            ]
+            selected_id = selected.id
+        else:
+            manual = TranslationCandidate(text=text, kind=CandidateKind.MANUAL)
+            candidates = [*unit.candidates, manual]
+            selected_id = manual.id
 
-    updated = unit.model_copy(
-        update={"candidates": candidates, "selected_candidate_id": selected_id}
-    )
-    store.db.save(updated)
-    record_edit(
-        store,
-        unit_id=unit.id,
-        before=before,
-        after=text,
-        action=EditAction.EDIT_TRANSLATION,
-        editor=editor,
-    )
+        updated = unit.model_copy(
+            update={"candidates": candidates, "selected_candidate_id": selected_id}
+        )
+        store.db.save(updated)
+        record_edit(
+            store,
+            unit_id=unit.id,
+            before=before,
+            after=text,
+            action=EditAction.EDIT_TRANSLATION,
+            editor=editor,
+        )
     return _unit_payload(store, updated)
 
 
@@ -309,18 +310,18 @@ def select_candidate(
     candidate = next((c for c in unit.candidates if c.id == candidate_id), None)
     if candidate is None:
         raise NotFoundError(f"no candidate {candidate_id!r} on unit {unit_id!r}")
-    before = selected_text(unit)
-
-    updated = unit.model_copy(update={"selected_candidate_id": candidate.id})
-    store.db.save(updated)
-    record_edit(
-        store,
-        unit_id=unit.id,
-        before=before,
-        after=candidate.text,
-        action=EditAction.SELECT_CANDIDATE,
-        editor=editor,
-    )
+    with history.record(store, unit.page_id, "select_candidate", editor=editor):
+        before = selected_text(unit)
+        updated = unit.model_copy(update={"selected_candidate_id": candidate.id})
+        store.db.save(updated)
+        record_edit(
+            store,
+            unit_id=unit.id,
+            before=before,
+            after=candidate.text,
+            action=EditAction.SELECT_CANDIDATE,
+            editor=editor,
+        )
     return _unit_payload(store, updated)
 
 
@@ -344,7 +345,8 @@ def set_region_status(store: ProjectStore, region_id: str, status: str) -> dict[
     except ValueError:
         allowed = ", ".join(s.value for s in RegionStatus)
         raise ValueError(f"unknown region status {status!r}; allowed: {allowed}") from None
-    store.db.save(region.model_copy(update={"status": new_status}))
+    with history.record(store, region.page_id, "set_status"):
+        store.db.save(region.model_copy(update={"status": new_status}))
     return page_view(store, region.page_id)
 
 
@@ -356,7 +358,8 @@ def move_region(
     if width < 0 or height < 0:
         raise ValueError("region width and height must be non-negative")
     bbox = BBox(x=x, y=y, width=width, height=height)
-    store.db.save(region.model_copy(update={"bbox": bbox}))
+    with history.record(store, region.page_id, "move_region"):
+        store.db.save(region.model_copy(update={"bbox": bbox}))
     return page_view(store, region.page_id)
 
 
@@ -372,7 +375,8 @@ def reorder_regions(
     by_id = {region.id: region for region in store.db.list(Region, where=("page_id", page_id))}
     if set(ordered_region_ids) != set(by_id):
         raise ValueError("ordered_region_ids must be a permutation of the page's regions")
-    _reindex(store, [by_id[rid] for rid in ordered_region_ids])
+    with history.record(store, page_id, "reorder"):
+        _reindex(store, [by_id[rid] for rid in ordered_region_ids])
     return page_view(store, page_id)
 
 
@@ -401,19 +405,22 @@ def split_region(
         second = BBox(x=b.x + cut, y=b.y, width=b.width - cut, height=b.height)
 
     new_region = Region(page_id=region.page_id, bbox=second, type=region.type, status=region.status)
-    store.db.save(region.model_copy(update={"bbox": first}))
-    store.db.save(new_region)
+    with history.record(store, region.page_id, "split_region"):
+        store.db.save(region.model_copy(update={"bbox": first}))
+        store.db.save(new_region)
 
-    ordered = [r for r in _page_regions_in_order(store, region.page_id) if r.id != new_region.id]
-    position = next(i for i, r in enumerate(ordered) if r.id == region.id)
-    ordered.insert(position + 1, new_region)
-    _reindex(store, ordered)
+        ordered = [
+            r for r in _page_regions_in_order(store, region.page_id) if r.id != new_region.id
+        ]
+        position = next(i for i, r in enumerate(ordered) if r.id == region.id)
+        ordered.insert(position + 1, new_region)
+        _reindex(store, ordered)
 
-    for unit in store.db.list(TranslationUnit, where=("page_id", region.page_id)):
-        if region.id in unit.ordered_region_ids:
-            ids = list(unit.ordered_region_ids)
-            ids.insert(ids.index(region.id) + 1, new_region.id)
-            store.db.save(unit.model_copy(update={"ordered_region_ids": ids}))
+        for unit in store.db.list(TranslationUnit, where=("page_id", region.page_id)):
+            if region.id in unit.ordered_region_ids:
+                ids = list(unit.ordered_region_ids)
+                ids.insert(ids.index(region.id) + 1, new_region.id)
+                store.db.save(unit.model_copy(update={"ordered_region_ids": ids}))
 
     return page_view(store, region.page_id)
 
@@ -438,23 +445,24 @@ def merge_regions(store: ProjectStore, region_ids: list[str]) -> dict[str, Any]:
     others = [region for region in regions if region.id != survivor.id]
     merged_ids = {region.id for region in others}
 
-    for other in others:
-        for span in store.db.list(OCRSpan, where=("region_id", other.id)):
-            store.db.save(span.model_copy(update={"region_id": survivor.id}))
-    store.db.save(survivor.model_copy(update={"bbox": BBox.union([r.bbox for r in regions])}))
-    for other in others:
-        store.db.delete(Region, where=("id", other.id))
+    with history.record(store, page_id, "merge_region"):
+        for other in others:
+            for span in store.db.list(OCRSpan, where=("region_id", other.id)):
+                store.db.save(span.model_copy(update={"region_id": survivor.id}))
+        store.db.save(survivor.model_copy(update={"bbox": BBox.union([r.bbox for r in regions])}))
+        for other in others:
+            store.db.delete(Region, where=("id", other.id))
 
-    for unit in store.db.list(TranslationUnit, where=("page_id", page_id)):
-        new_ids: list[str] = []
-        for rid in unit.ordered_region_ids:
-            mapped = survivor.id if rid in merged_ids else rid
-            if mapped not in new_ids:
-                new_ids.append(mapped)
-        if new_ids != list(unit.ordered_region_ids):
-            store.db.save(unit.model_copy(update={"ordered_region_ids": new_ids}))
+        for unit in store.db.list(TranslationUnit, where=("page_id", page_id)):
+            new_ids: list[str] = []
+            for rid in unit.ordered_region_ids:
+                mapped = survivor.id if rid in merged_ids else rid
+                if mapped not in new_ids:
+                    new_ids.append(mapped)
+            if new_ids != list(unit.ordered_region_ids):
+                store.db.save(unit.model_copy(update={"ordered_region_ids": new_ids}))
 
-    _reindex(store, _page_regions_in_order(store, page_id))
+        _reindex(store, _page_regions_in_order(store, page_id))
     return page_view(store, page_id)
 
 
@@ -466,18 +474,77 @@ def delete_region(store: ProjectStore, region_id: str) -> dict[str, Any]:
     """
     region = _require_region(store, region_id)
     page_id = region.page_id
-    store.db.delete(OCRSpan, where=("region_id", region.id))
-    for unit in store.db.list(TranslationUnit, where=("page_id", page_id)):
-        if region.id not in unit.ordered_region_ids:
-            continue
-        remaining = [rid for rid in unit.ordered_region_ids if rid != region.id]
-        if remaining:
-            store.db.save(unit.model_copy(update={"ordered_region_ids": remaining}))
-        else:
-            store.db.delete(TranslationUnit, where=("id", unit.id))
-    store.db.delete(Region, where=("id", region.id))
-    _reindex(store, _page_regions_in_order(store, page_id))
+    with history.record(store, page_id, "delete_region"):
+        store.db.delete(OCRSpan, where=("region_id", region.id))
+        for unit in store.db.list(TranslationUnit, where=("page_id", page_id)):
+            if region.id not in unit.ordered_region_ids:
+                continue
+            remaining = [rid for rid in unit.ordered_region_ids if rid != region.id]
+            if remaining:
+                store.db.save(unit.model_copy(update={"ordered_region_ids": remaining}))
+            else:
+                store.db.delete(TranslationUnit, where=("id", unit.id))
+        store.db.delete(Region, where=("id", region.id))
+        _reindex(store, _page_regions_in_order(store, page_id))
     return page_view(store, page_id)
+
+
+def _page_unit_sources(store: ProjectStore, page_id: str) -> list[tuple[str, str]]:
+    """``(unit_id, source_text)`` for a page's units in reading order (like the translate stage)."""
+    regions = {r.id: r for r in store.db.list(Region, where=("page_id", page_id))}
+    text_by_region: dict[str, str] = {}
+    for region in regions.values():
+        spans = store.db.list(OCRSpan, where=("region_id", region.id))
+        if spans:
+            text_by_region[region.id] = spans[0].text
+
+    def order(unit: TranslationUnit) -> int:
+        for rid in unit.ordered_region_ids:
+            region = regions.get(rid)
+            if region is not None and region.reading_order_index is not None:
+                return region.reading_order_index
+        return _ORDER_LAST
+
+    units = sorted(store.db.list(TranslationUnit, where=("page_id", page_id)), key=order)
+    out: list[tuple[str, str]] = []
+    for unit in units:
+        text = "\n".join(
+            text_by_region[rid] for rid in unit.ordered_region_ids if text_by_region.get(rid)
+        )
+        out.append((unit.id, text))
+    return out
+
+
+def _unit_context(
+    store: ProjectStore,
+    page: Page,
+    source: str,
+    *,
+    window: int,
+    glossary: Sequence[GlossaryEntry],
+    unit_id: str | None = None,
+) -> dict[str, Any]:
+    """Build a unit's context bundle from its page neighbours' source text (FR-22, §12.5).
+
+    For an existing unit pass ``unit_id`` to locate it among the page's ordered units; for a unit
+    about to be created (``unit_id`` None) ``source`` is treated as a new trailing line. Glossary
+    terms applicable to ``source`` are injected (FR-24).
+    """
+    existing = _page_unit_sources(store, page.id)
+    if unit_id is not None and any(uid == unit_id for uid, _ in existing):
+        sources = [text for _, text in existing]
+        index = next(i for i, (uid, _) in enumerate(existing) if uid == unit_id)
+    else:
+        sources = [*(text for _, text in existing), source]
+        index = len(existing)
+    page_count = len(store.db.list(Page))
+    context = build_context(
+        sources, index, page_index=page.index, page_count=page_count, window=window
+    )
+    terms = glossary_terms(applicable_entries(source, glossary))
+    if terms:
+        context = {**context, "glossary": terms}
+    return context
 
 
 def create_region(
@@ -507,45 +574,41 @@ def create_region(
     if width <= 0 or height <= 0:
         raise ValueError("region width and height must be positive")
     bbox = BBox(x=x, y=y, width=width, height=height)
-    region = Region(page_id=page_id, bbox=bbox, type=region_type, status=RegionStatus.MANUAL)
-    store.db.save(region)
-    _reindex(store, _page_regions_in_order(store, page_id))  # the new box sorts last; pin its index
-
+    # OCR + translation run before the history window opens (they don't touch the page state) so a
+    # missing engine fails fast without leaving a half-applied region behind.
     result = recognize(store.layout.root / page.image_path, bbox)
-    store.db.save(
-        OCRSpan(
-            region_id=region.id,
-            text=result.text,
-            confidence=result.confidence,
-            alternatives=list(result.alternatives),
-        )
-    )
-
     source = result.text
-    page_count = len(store.db.list(Page))
-    context = build_context(
-        [source], 0, page_index=page.index, page_count=page_count, window=window
-    )
-    terms = glossary_terms(applicable_entries(source, glossary))
-    if terms:
-        context = {**context, "glossary": terms}
+    context = _unit_context(store, page, source, window=window, glossary=glossary)
     translated = translate(source, context)
     candidate = TranslationCandidate(
         text=apply_glossary(translated.text, source, glossary),
         kind=CandidateKind.RAW,
         confidence=translated.confidence,
     )
-    store.db.save(
-        TranslationUnit(
-            page_id=page_id,
-            ordered_region_ids=[region.id],
-            source_bundle=source,
-            context_bundle=context,
-            candidates=[candidate],
-            selected_candidate_id=candidate.id,
-            style=style,
+
+    with history.record(store, page_id, "create_region"):
+        region = Region(page_id=page_id, bbox=bbox, type=region_type, status=RegionStatus.MANUAL)
+        store.db.save(region)
+        _reindex(store, _page_regions_in_order(store, page_id))  # new box sorts last; pin its index
+        store.db.save(
+            OCRSpan(
+                region_id=region.id,
+                text=result.text,
+                confidence=result.confidence,
+                alternatives=list(result.alternatives),
+            )
         )
-    )
+        store.db.save(
+            TranslationUnit(
+                page_id=page_id,
+                ordered_region_ids=[region.id],
+                source_bundle=source,
+                context_bundle=context,
+                candidates=[candidate],
+                selected_candidate_id=candidate.id,
+                style=style,
+            )
+        )
     return page_view(store, page_id)
 
 
@@ -585,6 +648,50 @@ def review_queue(store: ProjectStore, *, threshold: float = DEFAULT_THRESHOLD) -
         )
     )
     return {"threshold": threshold, "entries": entries}
+
+
+# -- undo / redo (§13; FR-42, I-3) --------------------------------------------------------
+#
+# Every mutation above records a page snapshot via storage.history; these expose stepping through
+# that log. The scope toggles with ``page_id``: None walks the whole project's history, a page id
+# walks only that page's. Each returns the refreshed view of the page that changed plus the history
+# list for the requested scope, so the editor can redraw and update its panel in one round-trip.
+
+
+def _history_payload(store: ProjectStore, *, page_id: str | None) -> dict[str, Any]:
+    entries = history.history_list(store, page_id=page_id)
+    return {
+        "scope": "page" if page_id is not None else "global",
+        "page_id": page_id,
+        "entries": entries,
+        "can_undo": any(not entry["undone"] for entry in entries),
+        "can_redo": any(entry["undone"] for entry in entries),
+    }
+
+
+def _history_response(
+    store: ProjectStore, affected: str | None, scope_page_id: str | None
+) -> dict[str, Any]:
+    return {
+        "affected_page_id": affected,
+        "view": page_view(store, affected) if affected is not None else None,
+        "history": _history_payload(store, page_id=scope_page_id),
+    }
+
+
+def undo_edit(store: ProjectStore, *, page_id: str | None = None) -> dict[str, Any]:
+    """Undo the most recent edit (globally, or on ``page_id``); returns the refreshed page + log."""
+    return _history_response(store, history.undo(store, page_id=page_id), page_id)
+
+
+def redo_edit(store: ProjectStore, *, page_id: str | None = None) -> dict[str, Any]:
+    """Redo the most recently undone edit (globally, or on ``page_id``)."""
+    return _history_response(store, history.redo(store, page_id=page_id), page_id)
+
+
+def history_view(store: ProjectStore, *, page_id: str | None = None) -> dict[str, Any]:
+    """The history log for the requested scope (global, or one page), newest first."""
+    return _history_payload(store, page_id=page_id)
 
 
 # -- re-render preview (§13.3) ------------------------------------------------------------

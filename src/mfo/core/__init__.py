@@ -29,6 +29,7 @@ from mfo.core.grouping import group_regions
 from mfo.core.ids import new_id, new_ulid
 from mfo.core.models import (
     EditRecord,
+    HistoryEntry,
     MfoModel,
     OCRSpan,
     Page,
@@ -95,6 +96,7 @@ __all__ = [
     "TranslationCandidate",
     "TranslationUnit",
     "EditRecord",
+    "HistoryEntry",
     "RenderArtifact",
     # pipeline
     "Pipeline",

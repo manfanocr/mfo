@@ -21,6 +21,7 @@
         + Region
       </button>
       <button id="queue-btn" title="Review low-confidence first (n / p to step)">Queue</button>
+      <button id="history-btn" title="Undo/redo history (Ctrl+Z / Ctrl+Y)">History</button>
       <button id="render-toggle" title="Preview the re-rendered page (r)">Preview</button>
       <button id="theme-toggle" title="Toggle dark mode (d)">◐</button>
     </header>
@@ -33,6 +34,17 @@
         <div id="queue-panel" hidden>
           <h2>Review queue · low-confidence first</h2>
           <div id="queue-list"></div>
+        </div>
+        <div id="history-panel" hidden>
+          <div class="panel-head">
+            <h2>History</h2>
+            <button id="history-scope" title="Toggle global / current-page history">Global</button>
+          </div>
+          <div class="btn-row">
+            <button id="undo-btn" title="Undo (Ctrl+Z)">↩ Undo</button>
+            <button id="redo-btn" title="Redo (Ctrl+Y)">↪ Redo</button>
+          </div>
+          <div id="history-list"></div>
         </div>
       </nav>
 
@@ -60,7 +72,7 @@
       <span class="spacer"></span>
       <span class="muted" id="shortcuts-hint">
         ↑/↓ regions · ←/→ pages · +/− zoom · 0 fit · e edit · 1-4 status · a new · del delete · s
-        split · m merge · r preview · n/p queue · d theme
+        split · m merge · ctrl+z/ctrl+y undo/redo · r preview · n/p queue · d theme
       </span>
     </footer>
 

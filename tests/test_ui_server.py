@@ -224,6 +224,34 @@ def test_create_region_route_reports_engine_unavailable(
     assert "manga-ocr" in response.json()["detail"]
 
 
+def test_undo_redo_routes_restore_a_region(client: tuple[TestClient, ProjectStore]) -> None:
+    api, store = client
+    region = store.db.list(Region)[0]
+    api.delete(f"/api/regions/{region.id}")
+    assert store.db.get(Region, region.id) is None
+
+    undo = api.post("/api/undo", json={})
+    assert undo.status_code == 200
+    assert undo.json()["affected_page_id"] == region.page_id
+    assert store.db.get(Region, region.id) is not None  # the delete was undone
+
+    redo = api.post("/api/redo", json={})
+    assert redo.status_code == 200
+    assert store.db.get(Region, region.id) is None  # and re-applied
+
+
+def test_history_route_lists_entries(client: tuple[TestClient, ProjectStore]) -> None:
+    api, store = client
+    region = store.db.list(Region)[0]
+    api.delete(f"/api/regions/{region.id}")
+
+    body = api.get("/api/history").json()
+    assert body["scope"] == "global"
+    assert len(body["entries"]) == 1
+    assert body["entries"][0]["action"] == "delete_region"
+    assert body["can_undo"] is True and body["can_redo"] is False
+
+
 def test_put_page_order(client: tuple[TestClient, ProjectStore]) -> None:
     api, store = client
     region = store.db.list(Region)[0]

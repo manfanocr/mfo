@@ -155,3 +155,24 @@ class RenderArtifact(MfoModel):
     page_id: str
     output_path: str
     params: dict[str, Any] = Field(default_factory=dict)
+
+
+class HistoryEntry(MfoModel):
+    """One undoable edit on a page, capturing its before/after state for undo/redo (FR-42, I-2/I-3).
+
+    Every review mutation (a region op or a translation edit) is page-scoped, so an entry stores a
+    snapshot of the affected page's regions, OCR spans, and translation units *before* and *after*
+    the change. Undo restores ``before``; redo restores ``after``. ``seq`` is a per-project
+    monotonic counter giving a strict total order; ``undone`` marks a rolled-back entry. Filtering
+    by ``page_id`` yields a per-page history; ignoring it yields the global one.
+    """
+
+    id: str = Field(default_factory=partial(new_id, "hist"))
+    page_id: str
+    seq: int
+    action: str  # a short human-readable label, e.g. "delete_region"
+    editor: str = "user"
+    timestamp: datetime = Field(default_factory=_utcnow)
+    before: dict[str, Any] = Field(default_factory=dict)
+    after: dict[str, Any] = Field(default_factory=dict)
+    undone: bool = False

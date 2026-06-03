@@ -25,6 +25,7 @@ const state = {
   queue: [], // review-queue entries, low-confidence first
   preview: false, // showing the re-rendered page over the source
   createMode: false, // drawing a new region instead of panning
+  historyScope: "global", // "global" | "page" — what undo/redo and the history panel act on
   zoom: 1,
   pan: { x: 0, y: 0 },
 };
@@ -98,6 +99,18 @@ async function loadProject() {
   const lowTotal = data.pages.reduce((n, pg) => n + pg.low_confidence, 0);
   status(`${data.pages.length} page(s), ${lowTotal} low-confidence region(s).`);
   if (data.pages.length) selectPage(data.pages[0].page_id);
+}
+
+// Re-fetch the project index and redraw the page list so per-page counts (regions/units/
+// low-confidence) stay live after an edit, without disturbing the current selection.
+async function refreshProject() {
+  try {
+    const data = await getJSON("/api/project");
+    state.pages = data.pages;
+    renderPageList();
+  } catch {
+    /* a transient refresh failure shouldn't interrupt the edit that triggered it */
+  }
 }
 
 function renderPageList() {
@@ -669,6 +682,74 @@ async function toggleQueue() {
   $("#queue-btn").classList.toggle("active", showing);
 }
 
+// -- undo / redo history (§13; FR-42) -----------------------------------------------------
+
+function historyScopePageId() {
+  return state.historyScope === "page" && state.page ? state.page.page_id : null;
+}
+
+async function stepHistory(kind) {
+  const pageId = historyScopePageId();
+  try {
+    const res = await sendJSON("POST", `/api/${kind}`, { page_id: pageId });
+    if (!res.affected_page_id) {
+      status(kind === "undo" ? "Nothing to undo." : "Nothing to redo.");
+    } else {
+      await selectPage(res.affected_page_id);
+      status(kind === "undo" ? "Undid an edit." : "Redid an edit.");
+    }
+    await refreshProject();
+    renderHistory(res.history);
+    if (!$("#queue-panel").hidden) await loadQueue();
+  } catch (err) {
+    status(`${kind} failed: ${err.message}`);
+  }
+}
+
+const undo = () => stepHistory("undo");
+const redo = () => stepHistory("redo");
+
+async function loadHistory() {
+  const pageId = historyScopePageId();
+  const data = await getJSON(`/api/history${pageId ? `?page_id=${pageId}` : ""}`);
+  renderHistory(data);
+}
+
+function renderHistory(data) {
+  if (!data) return;
+  $("#history-scope").textContent = data.scope === "page" ? "This page" : "Global";
+  $("#undo-btn").disabled = !data.can_undo;
+  $("#redo-btn").disabled = !data.can_redo;
+  const list = $("#history-list");
+  list.replaceChildren();
+  if (!data.entries.length) {
+    list.append(el("p", { class: "muted", text: "No edits yet." }));
+    return;
+  }
+  for (const e of data.entries) {
+    list.append(
+      el("div", { class: `history-row${e.undone ? " undone" : ""}` }, [
+        el("span", { class: "page-idx", text: `#${e.seq}` }),
+        el("span", { text: e.action.replace(/_/g, " ") }),
+        el("span", { class: "muted", text: e.editor }),
+      ]),
+    );
+  }
+}
+
+async function toggleHistory() {
+  const panel = $("#history-panel");
+  const showing = panel.hidden;
+  if (showing) await loadHistory();
+  panel.hidden = !showing;
+  $("#history-btn").classList.toggle("active", showing);
+}
+
+function toggleHistoryScope() {
+  state.historyScope = state.historyScope === "global" ? "page" : "global";
+  loadHistory();
+}
+
 // -- zoom & pan (§13.5) -------------------------------------------------------------------
 
 function applyTransform() {
@@ -886,6 +967,17 @@ function wirePanZoom() {
 function wireKeyboard() {
   window.addEventListener("keydown", (e) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+    // Undo/redo (Ctrl/Cmd+Z, Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z) act on the current history scope.
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
+      e.preventDefault();
+      undo();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "y" || e.key.toLowerCase() === "z")) {
+      e.preventDefault();
+      redo();
+      return;
+    }
     const statusKey = STATUSES.find((s) => s.key === e.key);
     if (statusKey) {
       e.preventDefault();
@@ -972,6 +1064,10 @@ function init() {
   $("#render-toggle").addEventListener("click", togglePreview);
   $("#create-btn").addEventListener("click", () => toggleCreateMode());
   $("#queue-btn").addEventListener("click", toggleQueue);
+  $("#history-btn").addEventListener("click", toggleHistory);
+  $("#history-scope").addEventListener("click", toggleHistoryScope);
+  $("#undo-btn").addEventListener("click", undo);
+  $("#redo-btn").addEventListener("click", redo);
   window.addEventListener("resize", () => applyTransform());
 
   wirePanZoom();

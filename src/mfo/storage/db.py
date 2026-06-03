@@ -20,6 +20,7 @@ from typing import TypeVar
 
 from mfo.core import (
     EditRecord,
+    HistoryEntry,
     OCRSpan,
     Page,
     Region,
@@ -47,6 +48,7 @@ _TABLES: dict[type[MfoModel], _Table] = {
     TranslationUnit: _Table("translation_units", {"page_id": "page_id"}),
     EditRecord: _Table("edit_records", {"translation_unit_id": "translation_unit_id"}),
     RenderArtifact: _Table("render_artifacts", {"page_id": "page_id"}),
+    HistoryEntry: _Table("history_entries", {"page_id": "page_id", "seq": "seq"}),
 }
 
 
@@ -54,7 +56,7 @@ def _migration_001(conn: sqlite3.Connection) -> None:
     """Create the base schema for every entity table."""
     for table in _TABLES.values():
         extra = "".join(
-            f", {column} {'INTEGER' if column == 'idx' else 'TEXT'}"
+            f", {column} {'INTEGER' if column in ('idx', 'seq') else 'TEXT'}"
             for column in table.index_columns
         )
         conn.execute(
@@ -82,8 +84,24 @@ def _migration_002(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_003(conn: sqlite3.Connection) -> None:
+    """Create the ``history_entries`` table for undo/redo (page-scoped before/after snapshots).
+
+    A fresh database already has it (``_migration_001`` builds from the current table definitions);
+    existing databases pick it up here. ``CREATE TABLE IF NOT EXISTS`` keeps it idempotent.
+    """
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS history_entries "
+        "(id TEXT PRIMARY KEY, data TEXT NOT NULL, page_id TEXT, seq INTEGER)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_history_entries_page_id ON history_entries (page_id)"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_history_entries_seq ON history_entries (seq)")
+
+
 # Ordered list of migrations; the schema version is the number applied.
-_MIGRATIONS = [_migration_001, _migration_002]
+_MIGRATIONS = [_migration_001, _migration_002, _migration_003]
 SCHEMA_VERSION = len(_MIGRATIONS)
 
 

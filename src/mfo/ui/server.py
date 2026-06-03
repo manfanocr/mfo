@@ -23,18 +23,21 @@ from mfo.ui.review import (
     create_region,
     delete_region,
     edit_translation,
+    history_view,
     merge_regions,
     move_region,
     page_image_path,
     page_render_path,
     page_view,
     project_summary,
+    redo_edit,
     reorder_regions,
     rerender_page,
     review_queue,
     select_candidate,
     set_region_status,
     split_region,
+    undo_edit,
     unit_view,
 )
 
@@ -121,6 +124,12 @@ class RegionCreate(BaseModel):
     width: float
     height: float
     type: str = "bubble"
+
+
+class HistoryScope(BaseModel):
+    """Body for an undo/redo step: ``None`` walks global history, a page id walks that page's."""
+
+    page_id: str | None = None
 
 
 # The OCR/translate engines a created region needs. Wired lazily from the project config so this
@@ -264,6 +273,20 @@ def create_app(store: ProjectStore) -> FastAPI:
     @app.put("/api/pages/{page_id}/order")
     def put_page_order(page_id: str, body: RegionOrder) -> dict[str, Any]:
         return reorder_regions(store, page_id, body.ordered_region_ids)
+
+    # -- undo / redo / history (§13; FR-42) --
+
+    @app.post("/api/undo")
+    def post_undo(body: HistoryScope) -> dict[str, Any]:
+        return undo_edit(store, page_id=body.page_id)
+
+    @app.post("/api/redo")
+    def post_redo(body: HistoryScope) -> dict[str, Any]:
+        return redo_edit(store, page_id=body.page_id)
+
+    @app.get("/api/history")
+    def get_history(page_id: str | None = None) -> dict[str, Any]:
+        return history_view(store, page_id=page_id)
 
     # -- re-render preview (§13.3) --
 
