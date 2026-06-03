@@ -255,3 +255,25 @@ def test_default_transport_wraps_network_error(monkeypatch: pytest.MonkeyPatch) 
     adapter = ApiTranslator(ApiTranslatorConfig(api_key="k"))
     with pytest.raises(TranslatorDependencyError, match="could not reach the translation API"):
         adapter.translate(_request())
+
+
+def test_default_transport_surfaces_http_error_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An HTTP error's body says *why* (e.g. Ollama's 404 "model not found"); surface it instead of a
+    # bare "HTTP Error 404: Not Found" so a misconfigured MFO_API_MODEL is an obvious fix.
+    import io
+    import urllib.error
+    import urllib.request
+
+    def boom(*_args: Any, **_kwargs: Any) -> None:
+        raise urllib.error.HTTPError(
+            "http://localhost:11434/v1/chat/completions",
+            404,
+            "Not Found",
+            {},  # type: ignore[arg-type]
+            io.BytesIO(b'{"error":{"message":"model \\"gpt-4o-mini\\" not found"}}'),
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    adapter = ApiTranslator(ApiTranslatorConfig(api_key="k"))
+    with pytest.raises(TranslatorDependencyError, match="model .* not found"):
+        adapter.translate(_request())

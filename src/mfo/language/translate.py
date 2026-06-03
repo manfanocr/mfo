@@ -154,6 +154,19 @@ def _http_post_json(
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
             body = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        # An HTTP error carries a response body that usually says *why* (e.g. Ollama answers 404
+        # with "model 'x' not found" when the model isn't pulled). Surface it so a misconfigured
+        # model/endpoint is a one-glance fix rather than a bare "HTTP Error 404: Not Found".
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8", "replace").strip()
+        except OSError:
+            detail = ""
+        suffix = f": {detail[:500]}" if detail else ""
+        raise TranslatorDependencyError(
+            f"could not reach the translation API at {url}: {exc}{suffix}"
+        ) from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise TranslatorDependencyError(
             f"could not reach the translation API at {url}: {exc}"
