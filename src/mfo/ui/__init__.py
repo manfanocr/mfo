@@ -1,1 +1,29 @@
-"""UI layer: local web-based review editor."""
+"""UI layer: local web-based review editor.
+
+The framework-free review service (:mod:`mfo.ui.review`) is always importable. The FastAPI app
+(:mod:`mfo.ui.server`) lives behind the optional ``review`` extra, so importing ``mfo.ui`` never
+requires FastAPI — keeping the offline core dependency-light (I-7/I-8). Import ``create_app`` from
+``mfo.ui.server`` directly when serving.
+"""
+
+from __future__ import annotations
+
+from mfo.ui.review import (
+    NotFoundError,
+    edit_translation,
+    page_image_path,
+    page_view,
+    project_summary,
+    select_candidate,
+    unit_view,
+)
+
+__all__ = [
+    "NotFoundError",
+    "project_summary",
+    "page_view",
+    "unit_view",
+    "page_image_path",
+    "edit_translation",
+    "select_candidate",
+]

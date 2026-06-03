@@ -103,9 +103,14 @@ class Database:
         self._conn = conn
 
     @classmethod
-    def open(cls, path: Path) -> Database:
-        """Open (creating if needed) the database at ``path`` and apply pending migrations."""
-        conn = sqlite3.connect(str(path))
+    def open(cls, path: Path, *, check_same_thread: bool = True) -> Database:
+        """Open (creating if needed) the database at ``path`` and apply pending migrations.
+
+        ``check_same_thread`` defaults to SQLite's thread-affinity guard. The review server (which
+        serves requests on worker threads) opens with it ``False``; writes still commit immediately
+        and one-at-a-time, and local single-user use never contends.
+        """
+        conn = sqlite3.connect(str(path), check_same_thread=check_same_thread)
         conn.execute("PRAGMA foreign_keys = ON")
         _migrate(conn)
         return cls(conn)

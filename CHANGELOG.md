@@ -9,6 +9,32 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 6.1 — Review backend/API** (M6 Review Editor):
+  - `mfo.ui.review`: the framework-free heart of the review backend — pure functions over a `ProjectStore`
+    that assemble the page-editor payloads (`project_summary` for the main screen's per-page index;
+    `page_view` exposing each page's regions with their OCR, aggregate confidence, and status, plus its
+    translation units with full candidate lists and edit history; `unit_view`; `page_image_path` for the
+    canvas, read-only — I-1) and apply the two edits review needs now: `edit_translation` (FR-37) lands
+    user text as a `MANUAL` candidate and selects it, and `select_candidate` (FR-49) revisits a prior
+    decision. Every mutation appends an immutable `EditRecord` (FR-42) and lands the choice as the
+    *selected* translation, so the translate stage preserves it and automation never silently overwrites
+    approved text (I-3). Confidence stays visible per region (I-4). Keeping this layer HTTP-free makes the
+    logic fully testable without a server.
+  - `mfo.ui.server`: a thin FastAPI shell over the service — `create_app(store)` wires read routes
+    (`GET /api/project`, `/api/pages/{id}`, `/api/pages/{id}/image`, `/api/units/{id}`) and mutation routes
+    (`PUT /api/units/{id}/translation`, `POST /api/units/{id}/select`), mapping a not-found entity to HTTP
+    404. FastAPI is an optional dependency (the new `review` extra: `fastapi` + `uvicorn`); importing the
+    server without it raises a clear, actionable error, so the offline core stays dependency-light
+    (I-7/I-8). The launcher (`mfo review`) arrives in batch 6.2 and builds on `create_app`.
+  - `mfo.storage`: `Database.open` / `ProjectStore.open` / `ProjectStore.create` gained an opt-in
+    `check_same_thread=False` so the threaded review server can use one SQLite connection across worker
+    threads; the default is unchanged, so every existing caller is unaffected.
+  - Tests: service layer (read views expose regions/OCR/units/confidence; `edit_translation` records a
+    manual candidate + `EditRecord`; repeated edits reuse one manual candidate but record each; `select_candidate`
+    reverts to a machine candidate and records it; unknown page/unit/candidate raise; a manual edit survives a
+    forced re-translation — I-3); HTTP layer via FastAPI's in-process client (serves project/page/image, edits
+    and persists records, selects, 404s), skipped when the `review` extra is absent.
+  - Satisfies: FR-37, FR-42, FR-49; I-1, I-3, I-4; spec §13.2.
 - **Batch 5.3 — Composite & export pages** (M5 Rendering & Export):
   - `mfo.render.composite`: a pure, storage-free compositor — the last render step. `composite_page` takes a
     page (normally the masked layer) and a list of `Placement`s (translated string + box + style) and, for
@@ -429,9 +455,10 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   never default) remains and is off the MVP-critical path. **M5 (Rendering & Export) is complete** — 5.1
   (text masking / removal — the reversible masked base layer), 5.2 (font fitting & placement — the pure
   typesetting engine), and 5.3 (composite & export pages — typesetting the selected translation onto each
-  masked layer and exporting translated pages + mapping/manifest/transcript, MVP-9). Next up: **M6 (Review
-  Editor)** — batch 6.1 (review backend/API) then 6.2 (local web editor UI) and 6.3 (in-place editing &
-  region ops); completing M6 satisfies the MVP Definition of Done (§21).
+  masked layer and exporting translated pages + mapping/manifest/transcript, MVP-9). **M6 (Review Editor)
+  started** — batch 6.1 (review backend/API: the framework-free review service + a FastAPI shell serving
+  and mutating project state, edits persisted as records). Next up: **batch 6.2** (local web editor UI)
+  then 6.3 (in-place editing & region ops); completing M6 satisfies the MVP Definition of Done (§21).
 
 <!--
 Template for a landed batch:

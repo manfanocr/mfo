@@ -243,7 +243,7 @@ plugs into.
 
 ## M6 — Review Editor  (MVP-8)  → completes MVP
 
-### Batch 6.1 — Review backend/API
+### Batch 6.1 — Review backend/API ✅ *(landed — see CHANGELOG)*
 - **Scope:** FastAPI service exposing pages, regions, OCR, translations, confidence, edit
   history; mutation endpoints that write `EditRecord`s; precedence of edits over automation.
 - **Satisfies:** I-3, FR-37, FR-42, FR-49; §13.2.

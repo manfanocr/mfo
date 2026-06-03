@@ -23,7 +23,9 @@ class ProjectStore:
         self._manifest = manifest
 
     @classmethod
-    def create(cls, root: Path | str, project: Project) -> ProjectStore:
+    def create(
+        cls, root: Path | str, project: Project, *, check_same_thread: bool = True
+    ) -> ProjectStore:
         """Create a new project directory. Refuses to overwrite an existing project (I-1)."""
         layout = ProjectLayout.at(root)
         if layout.exists():
@@ -31,17 +33,21 @@ class ProjectStore:
         layout.ensure()
         manifest = Manifest(project=project)
         write_manifest(layout.manifest_path, manifest)
-        db = Database.open(layout.db_path)
+        db = Database.open(layout.db_path, check_same_thread=check_same_thread)
         return cls(layout, db, manifest)
 
     @classmethod
-    def open(cls, root: Path | str) -> ProjectStore:
-        """Open an existing project directory."""
+    def open(cls, root: Path | str, *, check_same_thread: bool = True) -> ProjectStore:
+        """Open an existing project directory.
+
+        Pass ``check_same_thread=False`` when the store will be served by a threaded server (the
+        review backend), so SQLite access from worker threads is permitted.
+        """
         layout = ProjectLayout.at(root)
         if not layout.exists():
             raise FileNotFoundError(f"no project found at {layout.root}")
         manifest = read_manifest(layout.manifest_path)
-        db = Database.open(layout.db_path)
+        db = Database.open(layout.db_path, check_same_thread=check_same_thread)
         return cls(layout, db, manifest)
 
     @property
