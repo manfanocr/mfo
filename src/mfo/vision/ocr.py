@@ -88,39 +88,39 @@ _PADDLE_LANG = {"ja": "japan", "zh": "ch", "zh-cn": "ch", "en": "en", "ko": "kor
 
 
 def _paddle_lines(raw: object) -> list[tuple[str, float | None]]:
-    """Flatten PaddleOCR's nested ``[[ [box, (text, score)], ... ]]`` output into (text, score)s.
+    """Flatten PaddleOCR 3.x ``predict`` output into ``(text, score)`` pairs.
 
-    Defensive about shape across paddle versions: only ``[box, (text, score)]`` entries whose
-    payload starts with a string are accepted, so a box-only or rec-less result is simply ignored.
+    ``predict`` returns one dict-like result per image, each carrying parallel ``rec_texts`` and
+    ``rec_scores`` lists. We stay defensive about shape (missing keys, ragged lengths, non-string
+    entries) so a detection-only or malformed result is simply ignored rather than crashing.
     """
     if not raw:
         return []
-    pages: list[Any] = raw if isinstance(raw, list) else [raw]
+    results: list[Any] = raw if isinstance(raw, list) else [raw]
     lines: list[tuple[str, float | None]] = []
-    for page in pages:
-        if not page:
+    for result in results:
+        try:
+            texts = list(result["rec_texts"])
+        except (KeyError, TypeError, IndexError):
             continue
-        for entry in page:
-            if not (isinstance(entry, list | tuple) and len(entry) >= 2):
+        try:
+            scores = list(result["rec_scores"])
+        except (KeyError, TypeError, IndexError):
+            scores = []
+        for i, text in enumerate(texts):
+            if not isinstance(text, str):
                 continue
-            payload = entry[1]
-            if not (
-                isinstance(payload, list | tuple)
-                and len(payload) >= 2
-                and isinstance(payload[0], str)
-            ):
-                continue
-            score = payload[1]
-            lines.append((payload[0], float(score) if score is not None else None))
+            score = scores[i] if i < len(scores) else None
+            lines.append((text, float(score) if score is not None else None))
     return lines
 
 
 class PaddleOcrEngine:
-    """Offline OCR via PaddleOCR (JP/ZH/EN/KO). Model loads lazily on first use.
+    """Offline OCR via PaddleOCR 3.x (JP/ZH/EN/KO). Model loads lazily on first use.
 
-    PaddleOCR recognizes whole crops line-by-line; we join the lines top-to-bottom into one
-    transcription and average the per-line scores into a single confidence (I-4). It is an
-    **optional** dependency (``pip install 'mfo[ocr-paddle]'``).
+    PaddleOCR recognizes whole crops line-by-line; we join the lines into one transcription and
+    average the per-line scores into a single confidence (I-4). It is an **optional** dependency
+    (``pip install 'mfo[ocr-paddle]'``) that also needs the ``paddlepaddle`` inference backend.
     """
 
     name = "paddleocr"
@@ -139,12 +139,25 @@ class PaddleOcrEngine:
                 raise OcrDependencyError(
                     "paddleocr is not installed; install it with:  pip install 'mfo[ocr-paddle]'"
                 ) from exc
-            self._model = PaddleOCR(use_angle_cls=True, lang=self._lang, show_log=False)
+            try:
+                # PaddleOCR 3.x: skip the doc-orientation/unwarp/textline-orientation sub-models
+                # we don't need for single-crop recognition (fewer downloads, faster init).
+                self._model = PaddleOCR(
+                    lang=self._lang,
+                    use_doc_orientation_classify=False,
+                    use_doc_unwarping=False,
+                    use_textline_orientation=False,
+                )
+            except Exception as exc:  # missing paddlepaddle backend, bad lang, etc.
+                raise OcrDependencyError(
+                    "PaddleOCR could not initialize; install its inference backend with: "
+                    " pip install 'mfo[ocr-paddle]'"
+                ) from exc
         return self._model
 
     def recognize(self, image: Uint8Array) -> RecognizedText:
         model = self._ensure_model()
-        lines = _paddle_lines(model.ocr(image, cls=True))
+        lines = _paddle_lines(model.predict(image))
         text = "\n".join(text for text, _ in lines)
         scores = [score for _, score in lines if score is not None]
         confidence = round(sum(scores) / len(scores), 3) if scores else None

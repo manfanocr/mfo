@@ -59,6 +59,11 @@ editor. Not numbered PLAN batches; grouped here by kind. Each shipped with tests
   is never masked by a stale browser copy.
 
 #### Fixed
+- The PaddleOCR engine and detector now target PaddleOCR **3.x** (`predict()` API; the old
+  `show_log` / `.ocr(det=, rec=, cls=)` calls were removed upstream and raised
+  `ValueError: Unknown argument: show_log`). A missing/broken `paddlepaddle` backend is caught at
+  model construction and surfaced as a clear `OcrDependencyError` (OCR) or transparently falls back
+  to the baseline detector (`mfo detect --detector paddle`), instead of an ugly traceback. (I-7, NFR-17)
 - A missing Argos language package now raises a clear, actionable `TranslatorDependencyError` naming
   the package to install, instead of Argos's cryptic `'NoneType' … get_translation` AttributeError. (I-7)
 - The review page list keyed off the wrong field (`id` vs. the API's `page_id`), so pages weren't

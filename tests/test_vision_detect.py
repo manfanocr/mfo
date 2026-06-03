@@ -25,6 +25,7 @@ from mfo.vision.detect import (
     MLDetectorConfig,
     OnnxDetectionModel,
     PaddleDetector,
+    _paddle_boxes,
     classify_region,
     decode_detections,
     default_model_dir,
@@ -230,16 +231,52 @@ def test_get_detector_resolves_paddle_to_a_fallback_detector() -> None:
     assert isinstance(paddle_detector(), FallbackDetector)
 
 
-@pytest.mark.skipif(_PADDLEOCR_INSTALLED, reason="paddleocr is installed; can't test its absence")
-def test_paddle_detector_reports_missing_dependency_clearly() -> None:
+def _break_paddle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force the paddle text detector to be unavailable, whether or not paddleocr is installed.
+
+    If paddleocr is present, its ``TextDetection`` constructor is monkeypatched to raise (standing
+    in for a missing ``paddlepaddle`` backend); if absent, the import fails on its own.
+    """
+    if _PADDLEOCR_INSTALLED:
+        import paddleocr
+
+        def _boom(*args: object, **kwargs: object) -> object:
+            raise RuntimeError("paddlepaddle backend is not installed")
+
+        monkeypatch.setattr(paddleocr, "TextDetection", _boom)
+
+
+def test_paddle_boxes_flattens_3x_detection_results() -> None:
+    # TextDetection.predict() returns one dict-like result per image with a dt_polys list; both
+    # NumPy point arrays and plain nested lists are accepted, degenerate/malformed polys dropped.
+    raw = [
+        {
+            "dt_polys": [
+                np.array([[0, 0], [9, 0], [9, 9], [0, 9]]),  # NumPy quad
+                [[1, 1], [2, 1]],  # only two points → dropped
+            ]
+        }
+    ]
+    boxes = _paddle_boxes(raw)
+    assert boxes == [[(0.0, 0.0), (9.0, 0.0), (9.0, 9.0), (0.0, 9.0)]]
+    assert _paddle_boxes([{"rec_texts": ["x"]}]) == []  # rec-only result → no boxes
+    assert _paddle_boxes(None) == []
+    assert _paddle_boxes([None]) == []
+
+
+def test_paddle_detector_reports_missing_dependency_clearly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _break_paddle(monkeypatch)
     with pytest.raises(DetectorDependencyError, match="pip install"):
         PaddleDetector().detect(np.zeros((10, 10, 3), dtype=np.uint8))
 
 
-@pytest.mark.skipif(_PADDLEOCR_INSTALLED, reason="paddleocr is installed; can't test its absence")
-def test_paddle_falls_back_to_baseline_when_unavailable() -> None:
+def test_paddle_falls_back_to_baseline_when_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     # The "paddle" config name wraps PaddleDetector in a baseline fallback, so a missing paddle
-    # never hard-fails detection (mirrors the ml fallback).
+    # backend never hard-fails detection (mirrors the ml fallback). This is the exact path hit by
+    # `mfo detect --detector paddle` when paddlepaddle is not installed.
+    _break_paddle(monkeypatch)
     regions = paddle_detector().detect(_page_with_blocks())
     assert len(regions) == 3
 

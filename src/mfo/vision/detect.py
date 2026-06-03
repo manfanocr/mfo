@@ -439,7 +439,10 @@ class FallbackDetector:
             regions = self.primary.detect(image)
         except DetectorDependencyError as exc:
             _log.warning(
-                "ML detector unavailable (%s); falling back to %s", exc, self.fallback.name
+                "%s detector unavailable (%s); falling back to %s",
+                self.primary.name,
+                exc,
+                self.fallback.name,
             )
             self._resolved = self.fallback
             return self.fallback.detect(image)
@@ -461,54 +464,69 @@ def ml_detector(config: MLDetectorConfig | None = None) -> RegionDetector:
 
 
 def _paddle_boxes(raw: object) -> list[Any]:
-    """Flatten PaddleOCR's detection-only output into a flat list of 4-point quads (defensively)."""
+    """Flatten PaddleOCR 3.x detection output into a flat list of polygons (defensively).
+
+    ``TextDetection.predict`` returns one dict-like result per image, each carrying ``dt_polys``
+    (a list of point arrays). We stay tolerant of shape (NumPy arrays or nested lists, missing
+    keys) so a malformed result is simply ignored rather than crashing.
+    """
     if not raw:
         return []
-    pages: list[Any] = raw if isinstance(raw, list) else [raw]
+    results: list[Any] = raw if isinstance(raw, list) else [raw]
     boxes: list[Any] = []
-    for page in pages:
-        if not page:
+    for result in results:
+        try:
+            polys = result["dt_polys"]
+        except (KeyError, TypeError, IndexError):
             continue
-        for box in page:
-            if (
-                isinstance(box, list | tuple)
-                and len(box) >= 3
-                and all(isinstance(p, list | tuple) and len(p) >= 2 for p in box)
-            ):
-                boxes.append(box)
+        if polys is None:
+            continue
+        for poly in polys:
+            points = [
+                (float(point[0]), float(point[1]))
+                for point in poly
+                if len(point) >= 2  # NumPy rows and lists both index/len the same way
+            ]
+            if len(points) >= 3:
+                boxes.append(points)
     return boxes
 
 
 class PaddleDetector:
-    """Text-box detector backed by PaddleOCR's detection model (detection only, rec disabled).
+    """Text-box detector backed by PaddleOCR 3.x's standalone ``TextDetection`` model.
 
     Returns one :class:`DetectedRegion` per detected text quad (typed ``UNKNOWN`` — paddle does not
     classify bubble vs. caption). Raises :class:`DetectorDependencyError` (caught by
-    :class:`FallbackDetector`) when paddle is not installed.
+    :class:`FallbackDetector`) when paddle or its ``paddlepaddle`` backend is unavailable.
     """
 
     name = "paddle-det"
     version = "1"
 
-    def __init__(self, lang: str = "japan") -> None:
-        self._lang = lang
+    def __init__(self) -> None:
         self._model: Any = None
 
     def _ensure_model(self) -> Any:
         if self._model is None:
             try:
-                from paddleocr import PaddleOCR
+                from paddleocr import TextDetection
             except ImportError as exc:  # optional dependency not installed
                 raise DetectorDependencyError(
                     "paddleocr is not installed; install it with:  pip install 'mfo[ocr-paddle]'"
                 ) from exc
-            self._model = PaddleOCR(lang=self._lang, show_log=False)
+            try:
+                self._model = TextDetection()
+            except Exception as exc:  # missing paddlepaddle backend, model download, etc.
+                raise DetectorDependencyError(
+                    "PaddleOCR could not initialize; install its inference backend with: "
+                    " pip install 'mfo[ocr-paddle]'"
+                ) from exc
         return self._model
 
     def detect(self, image: Uint8Array) -> list[DetectedRegion]:
         model = self._ensure_model()
         regions: list[DetectedRegion] = []
-        for box in _paddle_boxes(model.ocr(image, det=True, rec=False, cls=False)):
+        for box in _paddle_boxes(model.predict(image)):
             xs = [float(point[0]) for point in box]
             ys = [float(point[1]) for point in box]
             x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)

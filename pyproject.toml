@@ -34,8 +34,8 @@ ocr = [
     "manga-ocr>=0.1",
 ]
 ocr-paddle = [
-    "paddleocr>=2.7",
-    "paddlepaddle>=2.6",
+    "paddleocr>=3.0",
+    "paddlepaddle>=3.0",
 ]
 detect = [
     "onnxruntime>=1.17",
