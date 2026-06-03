@@ -24,8 +24,10 @@ from mfo.ui import (
     page_render_path,
     page_view,
     project_summary,
+    reocr_region,
     reorder_regions,
     rerender_page,
+    retranslate_unit,
     review_queue,
     select_candidate,
     set_region_status,
@@ -428,6 +430,43 @@ def test_create_region_rejects_zero_size(tmp_path: Path) -> None:
                 translate=_echo,
                 target_lang="en",
             )
+
+
+# -- per-region OCR / translate jobs (§13.3) ----------------------------------------------
+
+
+def test_reocr_region_replaces_spans(tmp_path: Path) -> None:
+    with _project_with_unit(tmp_path / "proj", tmp_path / "src") as store:
+        region = store.db.list(Region)[0]
+
+        def recognize(path: Path, bbox: BBox) -> _Recognized:
+            return _Recognized(text="さようなら", confidence=0.6)
+
+        reocr_region(store, region.id, recognize=recognize)
+        spans = store.db.list(OCRSpan, where=("region_id", region.id))
+        assert len(spans) == 1  # replaced, not appended
+        assert spans[0].text == "さようなら"
+
+
+def test_retranslate_unit_refreshes_machine_candidate(tmp_path: Path) -> None:
+    with _project_with_unit(tmp_path / "proj", tmp_path / "src") as store:
+        unit = _unit(store)
+        result = retranslate_unit(
+            store, unit.id, translate=lambda s, c: _Result(text="NEW"), target_lang="en"
+        )
+        assert result["translation"] == "NEW"  # RAW selection refreshed
+
+
+def test_retranslate_unit_preserves_a_manual_edit(tmp_path: Path) -> None:
+    # A human edit must win over a re-translation (I-3, FR-29).
+    with _project_with_unit(tmp_path / "proj", tmp_path / "src") as store:
+        unit = _unit(store)
+        edit_translation(store, unit.id, "human approved")
+
+        result = retranslate_unit(store, unit.id, translate=_echo, target_lang="en")
+        assert result["translation"] == "human approved"  # selection stays on the manual candidate
+        kinds = {c["kind"] for c in result["candidates"]}
+        assert "raw" in kinds and "manual" in kinds
 
 
 # -- review queue (§13.4) -----------------------------------------------------------------

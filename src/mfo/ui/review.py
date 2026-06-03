@@ -612,6 +612,97 @@ def create_region(
     return page_view(store, page_id)
 
 
+# -- per-region re-OCR / re-translate jobs (§13.3; FR-12/21, I-3) --------------------------
+#
+# Run the project's OCR / translation engines on a single region/unit on demand, so a reviewer can
+# fix one box without re-running a whole stage. Both are wrapped in history (undoable) and a missing
+# optional engine surfaces as the same dependency error the create path raises (the server maps it
+# to a 503). The engine call runs before the history window opens so it fails fast.
+
+
+def _unit_source(store: ProjectStore, unit: TranslationUnit) -> str:
+    """Assemble a unit's source from its regions' OCR in reading order (as the translate stage)."""
+    parts: list[str] = []
+    for rid in unit.ordered_region_ids:
+        spans = store.db.list(OCRSpan, where=("region_id", rid))
+        if spans and spans[0].text:
+            parts.append(spans[0].text)
+    return "\n".join(parts)
+
+
+def _attach_machine_candidate(
+    unit: TranslationUnit,
+    source: str,
+    context: dict[str, Any],
+    *,
+    text: str,
+    confidence: float | None,
+    style: TranslationStyle,
+) -> TranslationUnit:
+    """Replace the unit's machine (RAW) candidate, keeping any human/AI one and selection (I-3)."""
+    preserved = [c for c in unit.candidates if c.kind is not CandidateKind.RAW]
+    raw = TranslationCandidate(text=text, kind=CandidateKind.RAW, confidence=confidence)
+    preserved_ids = {c.id for c in preserved}
+    selected = unit.selected_candidate_id if unit.selected_candidate_id in preserved_ids else raw.id
+    return unit.model_copy(
+        update={
+            "source_bundle": source,
+            "context_bundle": context,
+            "candidates": [*preserved, raw],
+            "selected_candidate_id": selected,
+            "style": style,
+        }
+    )
+
+
+def reocr_region(store: ProjectStore, region_id: str, *, recognize: Recognize) -> dict[str, Any]:
+    """Re-run OCR on one region, replacing its spans (FR-12). Undoable; returns the page view."""
+    region = _require_region(store, region_id)
+    page = _require_page(store, region.page_id)
+    result = recognize(store.layout.root / page.image_path, region.bbox)
+    with history.record(store, region.page_id, "reocr_region"):
+        store.db.delete(OCRSpan, where=("region_id", region.id))
+        store.db.save(
+            OCRSpan(
+                region_id=region.id,
+                text=result.text,
+                confidence=result.confidence,
+                alternatives=list(result.alternatives),
+            )
+        )
+    return page_view(store, region.page_id)
+
+
+def retranslate_unit(
+    store: ProjectStore,
+    unit_id: str,
+    *,
+    translate: Translate,
+    target_lang: str,
+    style: TranslationStyle = TranslationStyle.BALANCED,
+    glossary: Sequence[GlossaryEntry] = (),
+    window: int = DEFAULT_NEIGHBOR_WINDOW,
+) -> dict[str, Any]:
+    """Re-run machine translation for one unit from its current OCR + page context (FR-21, I-3).
+
+    Reassembles the source from the unit's regions, rebuilds the context bundle from its page
+    neighbours, translates, and attaches a fresh machine candidate — preserving any human/AI
+    candidate and selection so approved text is never clobbered (I-3). Undoable.
+    """
+    unit = _require_unit(store, unit_id)
+    page = _require_page(store, unit.page_id)
+    source = _unit_source(store, unit)
+    context = _unit_context(store, page, source, window=window, glossary=glossary, unit_id=unit.id)
+    translated = translate(source, context)
+    text = apply_glossary(translated.text, source, glossary)
+    with history.record(store, unit.page_id, "retranslate"):
+        updated = _attach_machine_candidate(
+            unit, source, context, text=text, confidence=translated.confidence, style=style
+        )
+        store.db.save(updated)
+    return _unit_payload(store, updated)
+
+
 # -- review queue (§13.4) -----------------------------------------------------------------
 
 

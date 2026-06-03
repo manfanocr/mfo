@@ -31,8 +31,10 @@ from mfo.ui.review import (
     page_view,
     project_summary,
     redo_edit,
+    reocr_region,
     reorder_regions,
     rerender_page,
+    retranslate_unit,
     review_queue,
     select_candidate,
     set_region_status,
@@ -268,6 +270,34 @@ def create_app(store: ProjectStore) -> FastAPI:
             )
         except (OcrDependencyError, TranslatorDependencyError) as exc:
             # The offline core works without these engines; surface a clear, actionable 503.
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.post("/api/regions/{region_id}/ocr")
+    def post_region_ocr(region_id: str) -> dict[str, Any]:
+        from mfo.vision.ocr import OcrDependencyError
+
+        recognize, _translate, _target, _style, _glossary = _region_engines(store)
+        try:
+            return reocr_region(store, region_id, recognize=recognize)
+        except OcrDependencyError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.post("/api/units/{unit_id}/translate")
+    def post_unit_translate(unit_id: str) -> dict[str, Any]:
+        from mfo.language.translate import TranslatorDependencyError
+        from mfo.vision.ocr import OcrDependencyError
+
+        _recognize, translate, target_lang, style, glossary = _region_engines(store)
+        try:
+            return retranslate_unit(
+                store,
+                unit_id,
+                translate=translate,
+                target_lang=target_lang,
+                style=style,
+                glossary=glossary,
+            )
+        except (OcrDependencyError, TranslatorDependencyError) as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.put("/api/pages/{page_id}/order")

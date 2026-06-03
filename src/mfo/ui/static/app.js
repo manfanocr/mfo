@@ -322,8 +322,11 @@ function mergeHint() {
 }
 
 function ocrSection(region) {
+  const rerun = el("button", { title: "Run OCR on this region now", text: "Re-run OCR" });
+  rerun.addEventListener("click", reocrRegion);
+  const head = el("div", { class: "btn-row" }, [rerun]);
   if (!region.ocr.length) {
-    return section("OCR", [el("p", { class: "muted", text: "No OCR for this region." })]);
+    return section("OCR", [head, el("p", { class: "muted", text: "No OCR for this region." })]);
   }
   const blocks = region.ocr.map((span) => {
     const block = el("div", {}, [el("div", { class: "text-block source", text: span.text })]);
@@ -336,7 +339,7 @@ function ocrSection(region) {
     block.append(head);
     return block;
   });
-  return section("OCR", blocks);
+  return section("OCR", [head, ...blocks]);
 }
 
 // Editable translation (FR-37): a textarea + Save; user text wins over automation (I-3).
@@ -350,13 +353,15 @@ function translationSection(unit) {
   reset.addEventListener("click", () => {
     ta.value = unit.translation || "";
   });
+  const retrans = el("button", { title: "Re-run machine translation now", text: "Re-translate" });
+  retrans.addEventListener("click", () => retranslateUnit(unit.unit_id));
   ta.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       saveTranslation(unit.unit_id, ta.value);
     }
   });
-  row.append(save, reset);
+  row.append(save, reset, retrans);
   return section("Translation", [ta, row]);
 }
 
@@ -586,6 +591,35 @@ async function createRegion(bbox) {
     status("Region created (OCR + translated).");
   } catch (err) {
     status(`Create failed: ${err.message}`);
+  }
+}
+
+// -- per-region OCR / translate jobs (§13.3) ----------------------------------------------
+
+async function reocrRegion() {
+  const region = selectedRegion();
+  if (!region) return;
+  try {
+    status("Running OCR…");
+    const view = await sendJSON("POST", `/api/regions/${region.region_id}/ocr`, {});
+    applyPageView(view, region.region_id);
+    invalidatePreview();
+    refreshProject();
+    status("OCR re-run.");
+  } catch (err) {
+    status(`OCR failed: ${err.message}`);
+  }
+}
+
+async function retranslateUnit(unitId) {
+  try {
+    status("Translating…");
+    await sendJSON("POST", `/api/units/${unitId}/translate`, {});
+    await selectPage(state.page.page_id);
+    invalidatePreview();
+    status("Re-translated.");
+  } catch (err) {
+    status(`Translate failed: ${err.message}`);
   }
 }
 

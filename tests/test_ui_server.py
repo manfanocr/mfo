@@ -224,6 +224,64 @@ def test_create_region_route_reports_engine_unavailable(
     assert "manga-ocr" in response.json()["detail"]
 
 
+def test_reocr_route_runs_ocr(
+    client: tuple[TestClient, ProjectStore], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api, store = client
+    region = store.db.list(Region)[0]
+
+    def fake_engines(_store: ProjectStore) -> tuple[object, object, str, object, tuple[()]]:
+        def recognize(path: Path, bbox: BBox) -> SimpleNamespace:
+            return SimpleNamespace(text="ZZ", confidence=None, alternatives=[])
+
+        return recognize, _echo, "en", "balanced", ()
+
+    monkeypatch.setattr("mfo.ui.server._region_engines", fake_engines)
+    response = api.post(f"/api/regions/{region.id}/ocr")
+    assert response.status_code == 200
+    assert response.json()["regions"][0]["ocr"][0]["text"] == "ZZ"
+
+
+def test_translate_route_runs(
+    client: tuple[TestClient, ProjectStore], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mfo.core.enums import TranslationStyle
+
+    api, store = client
+    unit = store.db.list(TranslationUnit)[0]
+
+    def fake_engines(_store: ProjectStore) -> tuple[object, object, str, object, tuple[()]]:
+        def recognize(path: Path, bbox: BBox) -> SimpleNamespace:
+            return SimpleNamespace(text="x", confidence=None, alternatives=[])
+
+        return recognize, _echo, "en", TranslationStyle.BALANCED, ()
+
+    monkeypatch.setattr("mfo.ui.server._region_engines", fake_engines)
+    response = api.post(f"/api/units/{unit.id}/translate")
+    assert response.status_code == 200
+    assert response.json()["translation"].startswith("EN[")  # re-translated from current OCR
+
+
+def test_reocr_route_reports_engine_unavailable(
+    client: tuple[TestClient, ProjectStore], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api, store = client
+    region = store.db.list(Region)[0]
+
+    def engines(_store: ProjectStore) -> tuple[object, object, str, object, tuple[()]]:
+        from mfo.vision.ocr import OcrDependencyError
+
+        def recognize(path: Path, bbox: BBox) -> _Result:
+            raise OcrDependencyError("manga-ocr is not installed")
+
+        return recognize, _echo, "en", "balanced", ()
+
+    monkeypatch.setattr("mfo.ui.server._region_engines", engines)
+    response = api.post(f"/api/regions/{region.id}/ocr")
+    assert response.status_code == 503
+    assert "manga-ocr" in response.json()["detail"]
+
+
 def test_undo_redo_routes_restore_a_region(client: tuple[TestClient, ProjectStore]) -> None:
     api, store = client
     region = store.db.list(Region)[0]
