@@ -27,6 +27,7 @@ from mfo.cli.stages import (
     PREPROCESS_STAGE,
     RENDER_STAGE,
     TRANSLATE_STAGE,
+    archive_extract_dir,
     build_pipeline,
     composite_page_file,
     load_glossary,
@@ -97,6 +98,7 @@ from mfo.vision import (
     discover_images,
     get_detector,
     get_ocr_engine,
+    is_archive,
     preprocess_file,
     recognize_file,
 )
@@ -211,7 +213,9 @@ def _read_manifest_order(path: Path) -> list[str]:
 @app.command(name="import")
 def import_(
     path: Annotated[Path, typer.Argument(help="Project directory.")],
-    source: Annotated[Path, typer.Argument(help="Directory of source page images.")],
+    source: Annotated[
+        Path, typer.Argument(help="Folder of source page images, or a .cbz/.zip archive.")
+    ],
     order: Annotated[PageOrder, typer.Option(help="Page ordering strategy.")] = PageOrder.NATURAL,
     manifest: Annotated[
         Path | None,
@@ -221,18 +225,25 @@ def import_(
         ),
     ] = None,
 ) -> None:
-    """Import a folder of page images into the project (originals are copied, never modified)."""
+    """Import page images from a folder or CBZ/ZIP archive (originals never modified)."""
     manifest_order = _read_manifest_order(manifest) if manifest is not None else None
     if manifest_order is not None:
         order = PageOrder.MANIFEST
 
     with _open_store(path) as store:
-        if not source.is_dir():
-            typer.secho(f"Not a directory: {source}", fg=typer.colors.RED, err=True)
+        if not (source.is_dir() or (source.is_file() and is_archive(source))):
+            typer.secho(
+                f"Not a directory or supported archive (.cbz/.zip): {source}",
+                fg=typer.colors.RED,
+                err=True,
+            )
             raise typer.Exit(code=1) from None
         # Record the source first so an interrupted import can still be resumed by `mfo run`.
         save_import_config(store, source=source, order=order, manifest_order=manifest_order)
-        scan = discover_images(source, order=order, manifest_order=manifest_order)
+        extract_to = archive_extract_dir(store, source) if is_archive(source) else None
+        scan = discover_images(
+            source, order=order, manifest_order=manifest_order, extract_to=extract_to
+        )
         pages = import_pages(store, scan.images)
 
     for skip in scan.skipped:

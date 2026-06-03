@@ -33,11 +33,14 @@ from mfo.vision.images import (
     read_image_size,
 )
 from mfo.vision.ingest import (
+    ARCHIVE_SUFFIXES,
     DiscoveredImage,
     ImportScan,
     PageOrder,
     SkippedImage,
     discover_images,
+    extract_archive,
+    is_archive,
 )
 from mfo.vision.ocr import (
     MangaOcrEngine,
@@ -92,11 +95,14 @@ __all__ = [
     "is_supported",
     "read_image_size",
     # ingest
+    "ARCHIVE_SUFFIXES",
     "DiscoveredImage",
     "ImportScan",
     "PageOrder",
     "SkippedImage",
     "discover_images",
+    "extract_archive",
+    "is_archive",
     # ocr
     "MangaOcrEngine",
     "OCREngine",

@@ -25,6 +25,27 @@ mfo review <proj>            # → open the web editor
 
 ---
 
+## Importing pages (folders & CBZ/ZIP)
+
+`mfo import` accepts either a **folder** of page images or a **`.cbz`/`.zip` archive**:
+
+```
+mfo import <proj> chapter-01/         # a folder of .png/.jpg/.webp/.tiff
+mfo import <proj> chapter-01.cbz      # a comic archive (CBZ is just a ZIP of images)
+```
+
+Pages are ordered by the same natural sort in both cases (`2` before `10`); pass `--order name`
+for plain lexicographic order, or `--manifest <file>` to fix an explicit order. Archive images are
+extracted **read-only** into the project cache and then copied into `pages/` — the source archive
+itself is never modified (I-1). Non-image entries (`ComicInfo.xml`, macOS resource forks) are
+ignored; a corrupt entry or a duplicate filename is skipped with a warning rather than aborting the
+whole import.
+
+> **CBR/RAR is not supported** — RAR needs a non-free dependency mfo doesn't bundle. Re-pack a
+> `.cbr` as `.cbz` (e.g. `unrar` then `zip`) or extract it to a folder first.
+
+---
+
 ## Going faster: parallel pages (`--jobs`)
 
 The heavy per-page stages — **preprocess, detect, OCR, translate, render, composite** — can process

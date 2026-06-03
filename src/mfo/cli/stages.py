@@ -56,6 +56,7 @@ from mfo.vision import (
     discover_images,
     get_detector,
     get_ocr_engine,
+    is_archive,
     preprocess_file,
     recognize_file,
 )
@@ -86,8 +87,17 @@ def composite_page_file(base_path: Path, placements: list[PagePlacement]) -> Com
     )
 
 
+def archive_extract_dir(store: ProjectStore, source: Path) -> Path:
+    """Where an archive's images are staged inside the project cache (read-only source, I-1)."""
+    return store.layout.cache_dir / "import" / Path(source).stem
+
+
 class ImportStage:
-    """Discover and import the configured source directory into the project (idempotent)."""
+    """Discover and import the configured source (directory or CBZ/ZIP) into the project.
+
+    Idempotent and replayable from a reopened project: an archive's images are extracted into the
+    project cache before discovery, and pages already copied are skipped (FR-5).
+    """
 
     name = IMPORT_STAGE
     deps: tuple[str, ...] = ()
@@ -104,15 +114,25 @@ class ImportStage:
         for name in self._manifest_order or ():
             digest.update(b"\x00")
             digest.update(name.encode("utf-8"))
-        # Fold in the current source listing so newly added pages re-trigger the import.
         if self._source.is_dir():
+            # Fold in the current source listing so newly added pages re-trigger the import.
             for name in sorted(p.name for p in self._source.iterdir() if p.is_file()):
                 digest.update(b"\x01")
                 digest.update(name.encode("utf-8"))
+        elif is_archive(self._source) and self._source.is_file():
+            # Fold in the archive's size + mtime so a changed archive re-triggers the import.
+            stat = self._source.stat()
+            digest.update(f"\x02{stat.st_size}:{stat.st_mtime_ns}".encode())
         return digest.hexdigest()
 
     def run(self, ctx: ProjectStore) -> None:
-        scan = discover_images(self._source, order=self._order, manifest_order=self._manifest_order)
+        extract_to = archive_extract_dir(ctx, self._source) if is_archive(self._source) else None
+        scan = discover_images(
+            self._source,
+            order=self._order,
+            manifest_order=self._manifest_order,
+            extract_to=extract_to,
+        )
         import_pages(ctx, scan.images)
 
 

@@ -10,6 +10,22 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 
 ### M8 — Hardening & Stretch
 
+#### Added — Batch 8.2: Archive import (CBZ/ZIP) (2026-06-03)
+- **`mfo import` reads `.cbz`/`.zip` archives, not just folders.** A CBZ is just a ZIP of images, so
+  `mfo.vision.ingest` gained `is_archive`/`ARCHIVE_SUFFIXES`/`extract_archive` and `discover_images`
+  now takes an `extract_to` staging dir: for an archive it extracts the page images into the project
+  cache **read-only** (the source archive is never opened for writing — I-1), then discovers them
+  exactly like a directory, applying the same natural-sort/`--order`/`--manifest` strategies. Entries
+  are flattened to their basenames and only the basename is ever used as the destination, so a
+  malicious archive can't escape the staging dir (no zip-slip). Non-image entries (`ComicInfo.xml`,
+  hidden `.`/AppleDouble files, `__MACOSX/` resource forks) are ignored; a corrupt entry or a
+  duplicate basename is skipped with a clear warning rather than aborting the import (NFR-9); a wholly
+  unreadable archive raises a clear error.
+- **Replayable under `mfo run`.** `ImportStage` stages the archive into the same cache dir and folds
+  the archive's size + mtime into its `inputs_hash`, so a reopened project resumes the import and a
+  changed archive re-triggers it. CBR/RAR is out of scope (needs a non-free dependency) and noted in
+  `docs/USER_GUIDE.md`. (FR-1, FR-2, I-1, NFR-9; relaxes NG-4)
+
 #### Added — Batch 8.1: Parallel processing & performance tuning (2026-06-03)
 - **`--jobs`: process pages concurrently.** The heavy per-page stages (preprocess, detect, OCR,
   translate, render, composite) now run several pages at once. Each stage was restructured into a

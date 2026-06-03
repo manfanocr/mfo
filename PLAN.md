@@ -343,7 +343,7 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
 - **DoD:** A multi-page volume processes pages in parallel with a measurable speedup; results are
   byte-identical to the serial run; cache still skips unchanged pages. Benchmark documented.
 
-### Batch 8.2 — Archive import (CBZ/ZIP)
+### Batch 8.2 — Archive import (CBZ/ZIP) ✅ *(landed 2026-06-03)*
 - **Scope:** Extend the import adapter (`mfo.vision.ingest` / `mfo import`) to read `.cbz`/`.zip`
   (and plain folders, as today). Pages are extracted **read-only** into the project cache (originals
   untouched, I-1), ordered by the same natural-sort strategy. CBR/RAR noted as out of scope (needs a
@@ -351,6 +351,12 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
 - **Satisfies:** FR-1, FR-2, I-1, NFR-9; relaxes NG-4.
 - **DoD:** `mfo import proj vol.cbz` builds an ordered project; corrupt entries skipped with a clear
   warning; source archive never modified.
+- **Shipped:** `is_archive`/`ARCHIVE_SUFFIXES`/`extract_archive` in `mfo.vision.ingest`;
+  `discover_images(..., extract_to=)` stages a CBZ/ZIP into the project cache then discovers it like
+  a directory (basename-flattened, zip-slip-safe; ignores `ComicInfo.xml`/resource forks; skips
+  corrupt entries + duplicate names; raises on a wholly unreadable archive). `mfo import` accepts a
+  folder or archive; `ImportStage` replays archive imports under `mfo run` (cache extract dir +
+  size/mtime in `inputs_hash`). USER_GUIDE + CHANGELOG. See CHANGELOG.
 
 ### Batch 8.3 — Formal plugin system (entry-point discovery)
 - **Scope:** Promote the per-layer `_FACTORIES` registries (detect/OCR/translate/assist/render) to a
@@ -442,7 +448,7 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
 - [x] M5 Render & Export
 - [x] M6 Review Editor *(MVP complete — M0–M6 satisfy the DoD §21)*
 - [x] M7 AI Refinement *(7.1 assist adapter, 7.2 modes, 7.3 confidence-driven review)*
-- [ ] M8 Hardening & Stretch *(planned into batches 8.0–8.11; 8.0 fused detect+recognize, 8.1 parallel processing landed)*
+- [ ] M8 Hardening & Stretch *(planned into batches 8.0–8.11; 8.0 fused detect+recognize, 8.1 parallel processing, 8.2 archive import landed)*
 
 When a batch lands: tick it, and append a dated entry to [CHANGELOG.md](CHANGELOG.md) with the
 spec IDs it satisfied.

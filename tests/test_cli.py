@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -165,6 +167,40 @@ def test_import_missing_source_exits_1(tmp_path: Path) -> None:
     target = tmp_path / "vol"
     runner.invoke(app, ["init", str(target)])
     result = runner.invoke(app, ["import", str(target), str(tmp_path / "nope")])
+    assert result.exit_code == 1
+
+
+def test_import_from_cbz_archive_builds_ordered_project(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    archive = tmp_path / "volume.cbz"
+    with zipfile.ZipFile(archive, "w") as zf:
+        for name in ("page1.png", "page2.png", "page10.png"):
+            buffer = io.BytesIO()
+            Image.new("RGB", (4, 5), "white").save(buffer, format="PNG")
+            zf.writestr(name, buffer.getvalue())
+
+    result = runner.invoke(app, ["import", str(target), str(archive)])
+    assert result.exit_code == 0, result.stdout
+    assert "Imported 3 page(s)" in result.stdout
+
+    with ProjectStore.open(target) as store:
+        pages = sorted(store.db.list(Page), key=lambda p: p.index)
+        assert [Path(p.image_path).name for p in pages] == ["page1.png", "page2.png", "page10.png"]
+    # Source archive never modified (I-1).
+    assert archive.is_file()
+
+    # `mfo run` replays the archive import from saved config; a second run skips it (resumable).
+    assert "[run ] import" in runner.invoke(app, ["run", str(target)]).stdout
+    assert "[skip] import" in runner.invoke(app, ["run", str(target)]).stdout
+
+
+def test_import_rejects_non_archive_file(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    bogus = tmp_path / "notes.txt"
+    bogus.write_text("not an archive")
+    result = runner.invoke(app, ["import", str(target), str(bogus)])
     assert result.exit_code == 1
 
 
