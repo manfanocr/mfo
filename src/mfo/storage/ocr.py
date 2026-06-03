@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Protocol
 
 from mfo.core import OCRSpan, Page, Region
+from mfo.core.enums import RegionStatus
 from mfo.core.geometry import BBox
 from mfo.storage.hashing import content_key, sha256_file
 from mfo.storage.project import ProjectStore
@@ -60,6 +61,8 @@ def ocr_regions(
         regions = store.db.list(Region, where=("page_id", page.id))
         if not regions:
             continue
+        # Regions auto-marked IGNORE (panel/frame blobs) are not real text; skip OCR for them.
+        eligible = [region for region in regions if region.status is not RegionStatus.IGNORE]
 
         original = store.layout.root / page.image_path
         source_hash = sha256_file(original)
@@ -68,13 +71,13 @@ def ocr_regions(
         current = page.ocr
         existing = [
             span
-            for region in regions
+            for region in eligible
             for span in store.db.list(OCRSpan, where=("region_id", region.id))
         ]
         if (
             not force
             and current.get("signature") == page_signature
-            and len(existing) == len(regions)
+            and len(existing) == len(eligible)
         ):
             continue
 
@@ -88,7 +91,7 @@ def ocr_regions(
                 confidence=result.confidence,
                 alternatives=list(result.alternatives),
             )
-            for region in regions
+            for region in eligible
             for result in (recognize(original, region.bbox),)
         ]
         store.db.save_all(spans)

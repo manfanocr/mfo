@@ -7,11 +7,20 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from mfo.core import Page, Project, Region, RenderArtifact
+from mfo.core import (
+    Page,
+    Project,
+    Region,
+    RenderArtifact,
+    TranslationCandidate,
+    TranslationUnit,
+)
+from mfo.core.enums import RegionStatus, RegionType
 from mfo.core.geometry import BBox
 from mfo.render import mask_file
 from mfo.storage import ProjectStore, import_pages, mask_pages
 from mfo.storage.hashing import sha256_file
+from mfo.storage.render import page_placements
 from mfo.vision.ingest import discover_images
 
 _SIGNATURE = "mask@1;pad=2;border=4"
@@ -90,6 +99,40 @@ def test_mask_pages_is_idempotent_then_forced(tmp_path: Path) -> None:
         forced = mask_pages(store, mask=_mask, signature=_SIGNATURE, force=True)
         assert len(forced) == 1
         assert len(store.db.list(RenderArtifact, where=("page_id", page.id))) == 1
+
+
+def _add_unit(store: ProjectStore, page: Page, region: Region, text: str) -> None:
+    cand = TranslationCandidate(text=text)
+    store.db.save(
+        TranslationUnit(
+            page_id=page.id,
+            ordered_region_ids=[region.id],
+            candidates=[cand],
+            selected_candidate_id=cand.id,
+        )
+    )
+
+
+def test_page_placements_skips_ignored_regions(tmp_path: Path) -> None:
+    # An auto-ignored panel/frame region must not be typeset, even if a unit carries text (item 11).
+    with _project_with_page(tmp_path / "proj", tmp_path / "src") as store:
+        page = store.db.list(Page)[0]
+        good = Region(
+            page_id=page.id, bbox=BBox(x=2, y=2, width=8, height=8), reading_order_index=0
+        )
+        ignored = Region(
+            page_id=page.id,
+            bbox=BBox(x=15, y=15, width=20, height=20),
+            type=RegionType.BUBBLE,
+            reading_order_index=1,
+            status=RegionStatus.IGNORE,
+        )
+        store.db.save_all([good, ignored])
+        _add_unit(store, page, good, "kept")
+        _add_unit(store, page, ignored, "dropped")
+
+        placements = page_placements(store, page)
+        assert [p.text for p in placements] == ["kept"]
 
 
 def test_redetecting_regions_invalidates_the_mask(tmp_path: Path) -> None:

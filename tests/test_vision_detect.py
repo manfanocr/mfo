@@ -24,6 +24,7 @@ from mfo.vision.detect import (
     MLDetector,
     MLDetectorConfig,
     OnnxDetectionModel,
+    PaddleDetector,
     classify_region,
     decode_detections,
     default_model_dir,
@@ -31,9 +32,11 @@ from mfo.vision.detect import (
     get_detector,
     ml_detector,
     non_max_suppression,
+    paddle_detector,
 )
 
 _ONNXRUNTIME_INSTALLED = importlib.util.find_spec("onnxruntime") is not None
+_PADDLEOCR_INSTALLED = importlib.util.find_spec("paddleocr") is not None
 
 
 def _page_with_blocks() -> np.ndarray:
@@ -87,15 +90,24 @@ def test_tiny_speck_is_filtered_out() -> None:
     assert ConnectedComponentsDetector().detect(img) == []
 
 
-def test_oversized_blob_is_kept_but_flagged_for_review() -> None:
+def test_oversized_blob_is_kept_but_auto_ignored() -> None:
     # A panel-sized block (>suspect_area_frac of the page) must not pass as a confident bubble: it
-    # is kept (not dropped) but flagged needs_review with a capped score (bug: whole frames as
-    # bubbles; I-4).
+    # is kept (not dropped) but auto-marked IGNORE with a capped score (bug: whole frames as
+    # bubbles; I-4) so OCR/translate/render and the review queue skip it.
     img = np.full((300, 300, 3), 255, dtype=np.uint8)
-    img[30:180, 30:180] = 0  # 150x150 = 25% of the page → suspicious
+    img[30:180, 30:180] = 0  # 150x150 = 25% of the page → suspicious by area
     [region] = ConnectedComponentsDetector().detect(img)
-    assert region.status is RegionStatus.NEEDS_REVIEW
+    assert region.status is RegionStatus.IGNORE
     assert region.confidence <= 0.3
+
+
+def test_wide_frame_is_ignored() -> None:
+    # A band spanning most of the page width is a panel/frame even when its area is modest: the
+    # wide_frac heuristic catches it and auto-ignores it (item 11).
+    img = np.full((300, 300, 3), 255, dtype=np.uint8)
+    img[100:120, 10:290] = 0  # 280px wide (~93% of the page) but only ~6% of its area
+    [region] = ConnectedComponentsDetector().detect(img)
+    assert region.status is RegionStatus.IGNORE
 
 
 def test_normal_block_is_auto() -> None:
@@ -211,6 +223,25 @@ def test_get_detector_resolves_ml_to_a_fallback_detector() -> None:
     detector = get_detector("ml")
     assert isinstance(detector, FallbackDetector)
     assert isinstance(ml_detector(), FallbackDetector)
+
+
+def test_get_detector_resolves_paddle_to_a_fallback_detector() -> None:
+    assert isinstance(get_detector("paddle"), FallbackDetector)
+    assert isinstance(paddle_detector(), FallbackDetector)
+
+
+@pytest.mark.skipif(_PADDLEOCR_INSTALLED, reason="paddleocr is installed; can't test its absence")
+def test_paddle_detector_reports_missing_dependency_clearly() -> None:
+    with pytest.raises(DetectorDependencyError, match="pip install"):
+        PaddleDetector().detect(np.zeros((10, 10, 3), dtype=np.uint8))
+
+
+@pytest.mark.skipif(_PADDLEOCR_INSTALLED, reason="paddleocr is installed; can't test its absence")
+def test_paddle_falls_back_to_baseline_when_unavailable() -> None:
+    # The "paddle" config name wraps PaddleDetector in a baseline fallback, so a missing paddle
+    # never hard-fails detection (mirrors the ml fallback).
+    regions = paddle_detector().detect(_page_with_blocks())
+    assert len(regions) == 3
 
 
 def test_default_model_dir_honors_env_override(monkeypatch: pytest.MonkeyPatch) -> None:

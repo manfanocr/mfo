@@ -33,6 +33,10 @@ dependencies = [
 ocr = [
     "manga-ocr>=0.1",
 ]
+ocr-paddle = [
+    "paddleocr>=2.7",
+    "paddlepaddle>=2.6",
+]
 detect = [
     "onnxruntime>=1.17",
 ]
@@ -97,6 +101,11 @@ ignore_missing_imports = true
 # onnxruntime is an optional dependency (the `detect` extra) and is not in the type-check env.
 [[tool.mypy.overrides]]
 module = ["onnxruntime.*"]
+ignore_missing_imports = true
+
+# paddleocr is an optional dependency (the `ocr-paddle` extra) and ships no type stubs.
+[[tool.mypy.overrides]]
+module = ["paddleocr.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

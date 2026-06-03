@@ -562,6 +562,9 @@ def review_queue(store: ProjectStore, *, threshold: float = DEFAULT_THRESHOLD) -
     entries: list[dict[str, Any]] = []
     for page in store.db.list(Page, order_by="idx"):
         for region in _page_regions_in_order(store, page.id):
+            # Auto-ignored panel/frame blobs aren't review work; keep them out of the queue.
+            if region.status is RegionStatus.IGNORE:
+                continue
             confidence = aggregate_confidence(region, spans.get(region.id, []))
             entries.append(
                 {

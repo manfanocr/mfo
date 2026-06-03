@@ -8,7 +8,7 @@ from pathlib import Path
 from PIL import Image
 
 from mfo.core import OCRSpan, Page, Project, Region
-from mfo.core.enums import RegionType
+from mfo.core.enums import RegionStatus, RegionType
 from mfo.core.geometry import BBox
 from mfo.storage import ProjectStore, import_pages, ocr_regions
 from mfo.vision import RecognizedText
@@ -108,3 +108,28 @@ def test_page_without_regions_is_skipped(tmp_path: Path) -> None:
     with store:
         assert ocr_regions(store, recognize=_recognizer(), signature="stub@1") == []
         assert store.db.list(OCRSpan) == []
+
+
+def test_ignored_regions_are_skipped(tmp_path: Path) -> None:
+    # Auto-ignored panel/frame blobs must not be OCR'd (item 11); only eligible regions get spans.
+    store = _project_with_regions(tmp_path / "proj", tmp_path / "src", regions=1)
+    with store:
+        page = store.db.list(Page)[0]
+        store.db.save(
+            Region(
+                page_id=page.id,
+                bbox=BBox(x=0, y=0, width=30, height=40),
+                type=RegionType.BUBBLE,
+                status=RegionStatus.IGNORE,
+            )
+        )
+        created = ocr_regions(store, recognize=_recognizer(), signature="stub@1")
+        assert len(created) == 1  # the eligible region only, not the ignored one
+        ignored = next(
+            r
+            for r in store.db.list(Region, where=("page_id", page.id))
+            if r.status is RegionStatus.IGNORE
+        )
+        assert store.db.list(OCRSpan, where=("region_id", ignored.id)) == []
+        # And the skip is idempotent — a second pass with the eligible region OCR'd is a no-op.
+        assert ocr_regions(store, recognize=_recognizer(), signature="stub@1") == []

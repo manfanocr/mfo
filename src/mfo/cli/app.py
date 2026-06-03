@@ -250,7 +250,8 @@ def preprocess(
 def detect(
     path: Annotated[Path, typer.Argument(help="Project directory.")],
     detector: Annotated[
-        str, typer.Option("--detector", help="Region detector to use ('baseline' or 'ml').")
+        str,
+        typer.Option("--detector", help="Region detector: 'baseline', 'ml', or 'paddle'."),
     ] = "baseline",
     force: Annotated[
         bool, typer.Option("--force", help="Re-detect even if a current result is cached.")
@@ -259,8 +260,9 @@ def detect(
     """Detect text regions on imported pages.
 
     The default 'baseline' detector is offline and needs no model download; 'ml' uses a trained
-    detector when available (pip install 'mfo[detect]') and transparently falls back to the
-    baseline if the dependency or model is absent.
+    detector when available (pip install 'mfo[detect]') and 'paddle' uses PaddleOCR's text detector
+    (pip install 'mfo[ocr-paddle]'). Both transparently fall back to the baseline if their
+    dependency or model is absent.
     """
     try:
         engine = get_detector(detector)
@@ -288,13 +290,13 @@ def ocr(
     ] = False,
 ) -> None:
     """Recognize text on detected regions (default engine manga-ocr — install with mfo[ocr])."""
-    try:
-        ocr_engine = get_ocr_engine(engine)
-    except ValueError as exc:
-        typer.secho(str(exc), fg=typer.colors.RED, err=True)
-        raise typer.Exit(code=1) from None
-    signature = f"{ocr_engine.name}@{ocr_engine.version}"
     with _open_store(path) as store:
+        try:
+            ocr_engine = get_ocr_engine(engine, lang=store.project.source_lang)
+        except ValueError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from None
+        signature = f"{ocr_engine.name}@{ocr_engine.version}"
         save_ocr_config(store, engine)
         try:
             spans = ocr_regions(

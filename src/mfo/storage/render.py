@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from mfo.core import Page, Region, RenderArtifact, TranslationUnit, selected_text
-from mfo.core.enums import RegionType
+from mfo.core.enums import RegionStatus, RegionType
 from mfo.core.geometry import BBox
 from mfo.storage.atomic import atomic_write_bytes
 from mfo.storage.hashing import content_key, sha256_file
@@ -181,6 +181,9 @@ def page_placements(store: ProjectStore, page: Page) -> list[PagePlacement]:
             continue
         unit_regions = [regions[rid] for rid in unit.ordered_region_ids if rid in regions]
         if not unit_regions:
+            continue
+        # Skip units whose region was auto-ignored (panel/frame blobs); they aren't real text.
+        if all(region.status is RegionStatus.IGNORE for region in unit_regions):
             continue
         preset = _TYPE_PRESETS.get(unit_regions[0].type, "default")
         placements.append(

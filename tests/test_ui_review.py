@@ -446,6 +446,16 @@ def test_review_queue_surfaces_low_confidence_first(tmp_path: Path) -> None:
         assert entries[1]["low_confidence"] is False
 
 
+def test_review_queue_excludes_ignored_regions(tmp_path: Path) -> None:
+    # Auto-ignored panel/frame blobs aren't review work; the queue leaves them out (item 11).
+    with _project_with_two_regions(tmp_path / "proj", tmp_path / "src") as store:
+        a, b = _regions_in_order(store)
+        set_region_status(store, b.id, "ignore")
+
+        entries = review_queue(store)["entries"]
+        assert [e["region_id"] for e in entries] == [a.id]
+
+
 # -- re-render preview (§13.3) ------------------------------------------------------------
 
 

@@ -14,9 +14,10 @@ region, kept separate from translation (FR-15).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import numpy as np
 from numpy.typing import NDArray
@@ -76,21 +77,102 @@ class MangaOcrEngine:
         return RecognizedText(text=text, confidence=None, alternatives=[])
 
 
-def manga_ocr_engine() -> OCREngine:
+def manga_ocr_engine(lang: str | None = None) -> OCREngine:
+    # manga-ocr is Japanese-only, so the source language is irrelevant here.
     return MangaOcrEngine()
 
 
-_FACTORIES = {"manga-ocr": manga_ocr_engine}
+# Map mfo source-language codes onto the model names PaddleOCR expects. Anything unknown is passed
+# through as-is so a caller can name a paddle language directly.
+_PADDLE_LANG = {"ja": "japan", "zh": "ch", "zh-cn": "ch", "en": "en", "ko": "korean"}
 
 
-def get_ocr_engine(name: str = "manga-ocr") -> OCREngine:
-    """Resolve an OCR engine by config name (NFR-17). Raises ``ValueError`` if unknown."""
+def _paddle_lines(raw: object) -> list[tuple[str, float | None]]:
+    """Flatten PaddleOCR's nested ``[[ [box, (text, score)], ... ]]`` output into (text, score)s.
+
+    Defensive about shape across paddle versions: only ``[box, (text, score)]`` entries whose
+    payload starts with a string are accepted, so a box-only or rec-less result is simply ignored.
+    """
+    if not raw:
+        return []
+    pages: list[Any] = raw if isinstance(raw, list) else [raw]
+    lines: list[tuple[str, float | None]] = []
+    for page in pages:
+        if not page:
+            continue
+        for entry in page:
+            if not (isinstance(entry, list | tuple) and len(entry) >= 2):
+                continue
+            payload = entry[1]
+            if not (
+                isinstance(payload, list | tuple)
+                and len(payload) >= 2
+                and isinstance(payload[0], str)
+            ):
+                continue
+            score = payload[1]
+            lines.append((payload[0], float(score) if score is not None else None))
+    return lines
+
+
+class PaddleOcrEngine:
+    """Offline OCR via PaddleOCR (JP/ZH/EN/KO). Model loads lazily on first use.
+
+    PaddleOCR recognizes whole crops line-by-line; we join the lines top-to-bottom into one
+    transcription and average the per-line scores into a single confidence (I-4). It is an
+    **optional** dependency (``pip install 'mfo[ocr-paddle]'``).
+    """
+
+    name = "paddleocr"
+    version = "1"  # adapter version; bump if the underlying model identity changes
+
+    def __init__(self, lang: str | None = None) -> None:
+        code = (lang or "ja").lower()
+        self._lang = _PADDLE_LANG.get(code, code)
+        self._model: Any = None
+
+    def _ensure_model(self) -> Any:
+        if self._model is None:
+            try:
+                from paddleocr import PaddleOCR
+            except ImportError as exc:  # optional dependency not installed
+                raise OcrDependencyError(
+                    "paddleocr is not installed; install it with:  pip install 'mfo[ocr-paddle]'"
+                ) from exc
+            self._model = PaddleOCR(use_angle_cls=True, lang=self._lang, show_log=False)
+        return self._model
+
+    def recognize(self, image: Uint8Array) -> RecognizedText:
+        model = self._ensure_model()
+        lines = _paddle_lines(model.ocr(image, cls=True))
+        text = "\n".join(text for text, _ in lines)
+        scores = [score for _, score in lines if score is not None]
+        confidence = round(sum(scores) / len(scores), 3) if scores else None
+        return RecognizedText(text=text, confidence=confidence, alternatives=[])
+
+
+def paddle_ocr_engine(lang: str | None = None) -> OCREngine:
+    return PaddleOcrEngine(lang=lang)
+
+
+_FACTORIES: dict[str, Callable[..., OCREngine]] = {
+    "manga-ocr": manga_ocr_engine,
+    "paddleocr": paddle_ocr_engine,
+}
+
+
+def get_ocr_engine(name: str = "manga-ocr", *, lang: str | None = None) -> OCREngine:
+    """Resolve an OCR engine by config name (NFR-17). Raises ``ValueError`` if unknown.
+
+    ``lang`` (the project's source language) is forwarded to engines that need it (e.g. PaddleOCR);
+    Japanese-only manga-ocr ignores it.
+    """
     try:
         factory = _FACTORIES[name]
     except KeyError:
         known = ", ".join(sorted(_FACTORIES))
         raise ValueError(f"unknown OCR engine {name!r}; available: {known}") from None
-    return factory()
+    return factory(lang=lang)
 
 
 def _crop(image: Image.Image, bbox: BBox) -> Image.Image:

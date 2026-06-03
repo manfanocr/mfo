@@ -13,12 +13,15 @@ from mfo.core.geometry import BBox
 from mfo.vision.ocr import (
     MangaOcrEngine,
     OcrDependencyError,
+    PaddleOcrEngine,
     RecognizedText,
+    _paddle_lines,
     get_ocr_engine,
     recognize_file,
 )
 
 _MANGA_OCR_INSTALLED = importlib.util.find_spec("manga_ocr") is not None
+_PADDLEOCR_INSTALLED = importlib.util.find_spec("paddleocr") is not None
 
 
 class _SpyEngine:
@@ -46,6 +49,33 @@ def test_get_ocr_engine_returns_manga_ocr_and_rejects_unknown() -> None:
     assert isinstance(get_ocr_engine("manga-ocr"), MangaOcrEngine)
     with pytest.raises(ValueError, match="unknown OCR engine"):
         get_ocr_engine("does-not-exist")
+
+
+def test_get_ocr_engine_resolves_paddle_with_lang() -> None:
+    engine = get_ocr_engine("paddleocr", lang="ja")
+    assert isinstance(engine, PaddleOcrEngine)
+    assert engine._lang == "japan"  # source code mapped to paddle's model name
+
+
+def test_paddle_lines_flattens_and_skips_non_text() -> None:
+    # PaddleOCR returns [[ [box, (text, score)], ... ]] per image; box-only / malformed rows drop.
+    raw = [
+        [
+            [[[0, 0], [9, 0], [9, 9], [0, 9]], ("hello", 0.9)],
+            [[[0, 10], [9, 10], [9, 19], [0, 19]], ("world", 0.7)],
+            [[[0, 20], [9, 20], [9, 29], [0, 29]]],  # box only, no payload → skipped
+        ]
+    ]
+    assert _paddle_lines(raw) == [("hello", 0.9), ("world", 0.7)]
+    assert _paddle_lines(None) == []
+    assert _paddle_lines([None]) == []
+
+
+@pytest.mark.skipif(_PADDLEOCR_INSTALLED, reason="paddleocr is installed; can't test its absence")
+def test_paddle_ocr_reports_missing_dependency_clearly() -> None:
+    image = np.full((10, 10, 3), 255, dtype=np.uint8)
+    with pytest.raises(OcrDependencyError, match="pip install"):
+        PaddleOcrEngine().recognize(image)
 
 
 def test_recognize_file_crops_to_the_bbox(tmp_path: Path) -> None:

@@ -18,7 +18,7 @@ import urllib.request
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import cv2
 import numpy as np
@@ -37,10 +37,11 @@ _log = logging.getLogger(__name__)
 class DetectedRegion:
     """A candidate text region in source-image pixel space.
 
-    ``status`` lets a detector mark a box it is unsure about (e.g. a panel-/frame-sized blob from
-    the heuristic baseline) as :attr:`RegionStatus.NEEDS_REVIEW` rather than dropping it, so the
-    box stays editable and surfaces in the review queue instead of masquerading as a confident
-    bubble (I-4). Most detections are :attr:`RegionStatus.AUTO`.
+    ``status`` lets a detector mark a box it does not trust (e.g. a panel-/frame-sized blob from the
+    heuristic baseline) as :attr:`RegionStatus.IGNORE` rather than dropping it, so the box stays in
+    the data (I-1/I-2) and editable but is skipped by OCR/translation/render and kept out of the
+    review queue, instead of masquerading as a confident bubble (I-4). Most detections are
+    :attr:`RegionStatus.AUTO`.
     """
 
     bbox: BBox
@@ -63,13 +64,15 @@ class BaselineConfig:
     """Heuristic thresholds for the connected-components baseline.
 
     The baseline can't tell a speech bubble from a dense panel, so rather than trust every blob it
-    keeps the doubtful ones but flags them for review (see ``suspect_area_frac``/``suspect_fill``).
-    Only specks and near-page-spanning blobs are dropped outright.
+    keeps the doubtful ones but auto-marks them ``IGNORE`` (mostly whole panels/frames; see
+    ``suspect_area_frac``/``wide_frac``). Only specks and near-page-spanning blobs are dropped
+    outright.
     """
 
     min_area_frac: float = 0.0004  # ignore specks smaller than this fraction of the page
     max_area_frac: float = 0.85  # drop only near-page-spanning blobs (e.g. a whole-page scan)
-    suspect_area_frac: float = 0.12  # bigger than a typical bubble → keep but flag for review
+    suspect_area_frac: float = 0.12  # bigger than a typical bubble → keep but auto-ignore
+    wide_frac: float = 0.85  # blob spanning ~this fraction of the page width → a panel/frame
     close_frac: float = 0.015  # morphological-close kernel as a fraction of the short edge
     min_fill: float = 0.12  # min filled fraction of the bounding box to count as text
 
@@ -137,15 +140,16 @@ class ConnectedComponentsDetector:
             fill = area / float(w * h)
             if fill < config.min_fill:
                 continue
-            # A speech bubble is small; a panel/frame blob is large. Keep an oversized blob but flag
-            # it for review with a capped score (I-4) instead of passing it off as a confident
-            # bubble or silently dropping what might be a real region.
-            suspicious = area_frac >= config.suspect_area_frac
+            # A speech bubble is small; a panel/frame blob is large or spans most of the page width.
+            # Keep an oversized/wide blob (don't silently drop a possible region) but auto-mark it
+            # IGNORE with a capped score (I-4): it is almost always panel art, so it is excluded
+            # from OCR/translation/render and the review queue rather than passing as a bubble.
+            suspicious = area_frac >= config.suspect_area_frac or (w / width) >= config.wide_frac
             confidence = _confidence(fill, area_frac)
             status = RegionStatus.AUTO
             if suspicious:
                 confidence = round(min(confidence, 0.3), 3)
-                status = RegionStatus.NEEDS_REVIEW
+                status = RegionStatus.IGNORE
             regions.append(
                 DetectedRegion(
                     bbox=BBox(x=float(x), y=float(y), width=float(w), height=float(h)),
@@ -448,7 +452,89 @@ def ml_detector(config: MLDetectorConfig | None = None) -> RegionDetector:
     return FallbackDetector(MLDetector(config), ConnectedComponentsDetector())
 
 
-_FACTORIES = {"baseline": baseline_detector, "ml": ml_detector}
+# --- PaddleOCR text detector adapter (FR-11; NFR-17) ------------------------------------------
+#
+# PaddleOCR ships a text-detection model that returns tight quads around text; used detection-only
+# it is a strong alternative to the connected-components baseline (boxes text, not panels). Optional
+# (``pip install 'mfo[ocr-paddle]'``) and lazy, so importing this module never pulls paddle in; when
+# absent, :func:`paddle_detector` falls back to the baseline so the pipeline never hard-fails.
+
+
+def _paddle_boxes(raw: object) -> list[Any]:
+    """Flatten PaddleOCR's detection-only output into a flat list of 4-point quads (defensively)."""
+    if not raw:
+        return []
+    pages: list[Any] = raw if isinstance(raw, list) else [raw]
+    boxes: list[Any] = []
+    for page in pages:
+        if not page:
+            continue
+        for box in page:
+            if (
+                isinstance(box, list | tuple)
+                and len(box) >= 3
+                and all(isinstance(p, list | tuple) and len(p) >= 2 for p in box)
+            ):
+                boxes.append(box)
+    return boxes
+
+
+class PaddleDetector:
+    """Text-box detector backed by PaddleOCR's detection model (detection only, rec disabled).
+
+    Returns one :class:`DetectedRegion` per detected text quad (typed ``UNKNOWN`` — paddle does not
+    classify bubble vs. caption). Raises :class:`DetectorDependencyError` (caught by
+    :class:`FallbackDetector`) when paddle is not installed.
+    """
+
+    name = "paddle-det"
+    version = "1"
+
+    def __init__(self, lang: str = "japan") -> None:
+        self._lang = lang
+        self._model: Any = None
+
+    def _ensure_model(self) -> Any:
+        if self._model is None:
+            try:
+                from paddleocr import PaddleOCR
+            except ImportError as exc:  # optional dependency not installed
+                raise DetectorDependencyError(
+                    "paddleocr is not installed; install it with:  pip install 'mfo[ocr-paddle]'"
+                ) from exc
+            self._model = PaddleOCR(lang=self._lang, show_log=False)
+        return self._model
+
+    def detect(self, image: Uint8Array) -> list[DetectedRegion]:
+        model = self._ensure_model()
+        regions: list[DetectedRegion] = []
+        for box in _paddle_boxes(model.ocr(image, det=True, rec=False, cls=False)):
+            xs = [float(point[0]) for point in box]
+            ys = [float(point[1]) for point in box]
+            x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
+            if x1 - x0 < 1.0 or y1 - y0 < 1.0:
+                continue
+            regions.append(
+                DetectedRegion(
+                    bbox=BBox(x=x0, y=y0, width=x1 - x0, height=y1 - y0),
+                    type=RegionType.UNKNOWN,
+                    confidence=0.9,  # paddle's det model is reliable but emits no per-box score
+                )
+            )
+        regions.sort(key=lambda r: (r.bbox.y, r.bbox.x))
+        return regions
+
+
+def paddle_detector() -> RegionDetector:
+    """The PaddleOCR text detector with a transparent baseline fallback (the ``"paddle"`` name)."""
+    return FallbackDetector(PaddleDetector(), ConnectedComponentsDetector())
+
+
+_FACTORIES = {
+    "baseline": baseline_detector,
+    "ml": ml_detector,
+    "paddle": paddle_detector,
+}
 
 
 def get_detector(name: str = "baseline") -> RegionDetector:

@@ -140,7 +140,7 @@ def _region_engines(store: ProjectStore) -> RegionEngines:
     project = store.project
     ocr_cfg = project.config.get("ocr", {})
     translate_cfg = project.config.get("translate", {})
-    ocr_engine = get_ocr_engine(ocr_cfg.get("engine", "manga-ocr"))
+    ocr_engine = get_ocr_engine(ocr_cfg.get("engine", "manga-ocr"), lang=project.source_lang)
     translator = get_translator(translate_cfg.get("translator", "argos"))
     style = TranslationStyle(translate_cfg.get("style", TranslationStyle.BALANCED.value))
     source_lang, target_lang = project.source_lang, project.target_lang
