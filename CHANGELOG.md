@@ -10,6 +10,18 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 
 ### M8 — Hardening & Stretch
 
+#### Added — Auto-merge overlapping detected regions (2026-06-03)
+- **One region per bubble.** Detectors (especially PaddleOCR) often split a single speech bubble
+  into several overlapping line-boxes, which then OCR and render as fragments. `get_detector` now
+  wraps every detector so overlapping output boxes are merged into one region (`MergingDetector` +
+  the pure `merge_overlapping_regions`): boxes that overlap by ≥ a fraction of the smaller box's
+  area are joined transitively (a column of stacked lines collapses to one), taking the union box,
+  the most conservative member confidence (I-4), and the largest member's type. A merged region's
+  per-line recognized `text` (from a det+rec detector) is dropped so the OCR stage re-reads the
+  whole merged crop in correct order; IGNORE panels/frames are never merged. On by default; tune
+  with `mfo detect --overlap-frac` or disable with `--no-merge-overlap` (both persisted so `mfo run`
+  reproduces them). Documented in `docs/USER_GUIDE.md`. (FR-11, FR-39 spirit; NFR-8, NFR-17; I-4)
+
 #### Added — Batch 8.0: Fused detect+recognize for det+rec engines (2026-06-03)
 - **`paddle-rec` detector — PaddleOCR detect+recognize in one pass, reused by OCR.** PaddleOCR
   recognizes while it detects, so using `--detector paddle` then `--engine paddleocr` ran paddle's

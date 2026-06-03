@@ -23,6 +23,7 @@ from mfo.vision.detect import (
     DetectedRegion,
     DetectorDependencyError,
     FallbackDetector,
+    MergingDetector,
     MLDetector,
     MLDetectorConfig,
     OnnxDetectionModel,
@@ -35,6 +36,7 @@ from mfo.vision.detect import (
     default_model_dir,
     detect_file,
     get_detector,
+    merge_overlapping_regions,
     ml_detector,
     non_max_suppression,
     paddle_detector,
@@ -125,9 +127,16 @@ def test_normal_block_is_auto() -> None:
 
 
 def test_get_detector_returns_baseline_and_rejects_unknown() -> None:
-    assert isinstance(get_detector("baseline"), ConnectedComponentsDetector)
+    assert isinstance(get_detector("baseline", merge_overlap=False), ConnectedComponentsDetector)
     with pytest.raises(ValueError, match="unknown detector"):
         get_detector("does-not-exist")
+
+
+def test_get_detector_wraps_with_merging_by_default() -> None:
+    wrapped = get_detector("baseline")
+    assert isinstance(wrapped, MergingDetector)
+    assert "+merge" in wrapped.name
+    assert isinstance(get_detector("baseline", merge_overlap=False), ConnectedComponentsDetector)
 
 
 def test_detect_file_reads_image_and_detects(tmp_path: Path) -> None:
@@ -172,6 +181,90 @@ def test_non_max_suppression_drops_overlaps_keeping_highest() -> None:
     kept = non_max_suppression([weak_overlap, strong, far], iou_threshold=0.45)
     assert strong in kept and far in kept
     assert weak_overlap not in kept
+
+
+# -- merging overlapping regions into one box per bubble (batch 8.0b) ----------------------
+
+
+def test_merge_overlapping_unions_chained_boxes() -> None:
+    # Three stacked, overlapping line-boxes (a bubble) collapse into one union region; a far box
+    # stays separate.
+    a = _region(10, 10, 40, 12, 0.8, RegionType.BUBBLE)
+    b = _region(12, 20, 40, 12, 0.6, RegionType.BUBBLE)  # overlaps a
+    c = _region(11, 30, 44, 12, 0.9, RegionType.BUBBLE)  # overlaps b → transitively merges a,b,c
+    far = _region(300, 300, 30, 10, 0.7, RegionType.BUBBLE)
+
+    merged = merge_overlapping_regions([a, b, c, far], overlap_frac=0.1)
+    assert len(merged) == 2
+    bubble = next(r for r in merged if r.bbox.x < 100)
+    assert (bubble.bbox.x, bubble.bbox.y) == (10.0, 10.0)
+    assert bubble.bbox.right == 55.0 and bubble.bbox.bottom == 42.0  # union of a,b,c
+    assert bubble.confidence == 0.6  # most conservative member (I-4)
+
+
+def test_merge_overlapping_drops_text_for_reocr() -> None:
+    # A det+rec detector's per-line text is dropped on merge so OCR re-reads the whole bubble crop.
+    a = DetectedRegion(
+        bbox=BBox(x=0, y=0, width=20, height=10),
+        type=RegionType.UNKNOWN,
+        confidence=0.9,
+        text="line one",
+        text_confidence=0.9,
+    )
+    b = DetectedRegion(
+        bbox=BBox(x=0, y=8, width=20, height=10),
+        type=RegionType.UNKNOWN,
+        confidence=0.9,
+        text="line two",
+        text_confidence=0.9,
+    )
+    merged = merge_overlapping_regions([a, b], overlap_frac=0.1)
+    assert len(merged) == 1
+    assert merged[0].text is None and merged[0].text_confidence is None
+
+
+def test_merge_overlapping_keeps_singletons_and_their_text() -> None:
+    a = DetectedRegion(
+        bbox=BBox(x=0, y=0, width=10, height=10),
+        type=RegionType.BUBBLE,
+        confidence=0.8,
+        text="kept",
+    )
+    far = _region(100, 100, 10, 10, 0.7, RegionType.BUBBLE)
+    merged = merge_overlapping_regions([a, far], overlap_frac=0.1)
+    assert len(merged) == 2
+    assert {r.text for r in merged} == {"kept", None}  # singleton text preserved
+
+
+def test_merge_overlapping_leaves_ignored_regions_untouched() -> None:
+    # A panel/frame blob (IGNORE) is never merged, even if a bubble box overlaps it.
+    panel = DetectedRegion(
+        bbox=BBox(x=0, y=0, width=200, height=200),
+        type=RegionType.BUBBLE,
+        confidence=0.3,
+        status=RegionStatus.IGNORE,
+    )
+    bubble = _region(10, 10, 40, 12, 0.8, RegionType.BUBBLE)
+    merged = merge_overlapping_regions([panel, bubble], overlap_frac=0.1)
+    assert len(merged) == 2
+    assert any(r.status is RegionStatus.IGNORE and r.bbox.width == 200 for r in merged)
+
+
+def test_merging_detector_applies_merge_to_inner_output() -> None:
+    class _Stub:
+        name = "stub"
+        version = "1"
+
+        def detect(self, image: np.ndarray) -> list[DetectedRegion]:
+            return [
+                _region(0, 0, 20, 10, 0.9, RegionType.BUBBLE),
+                _region(0, 8, 20, 10, 0.7, RegionType.BUBBLE),
+            ]
+
+    detector = MergingDetector(_Stub(), overlap_frac=0.1)
+    assert detector.name == "stub+merge"
+    regions = detector.detect(np.zeros((50, 50, 3), dtype=np.uint8))
+    assert len(regions) == 1  # the two overlapping boxes merged
 
 
 def test_decode_detections_unletterboxes_and_classifies() -> None:
@@ -226,13 +319,13 @@ def test_fallback_drops_to_baseline_when_model_unavailable() -> None:
 
 
 def test_get_detector_resolves_ml_to_a_fallback_detector() -> None:
-    detector = get_detector("ml")
+    detector = get_detector("ml", merge_overlap=False)
     assert isinstance(detector, FallbackDetector)
     assert isinstance(ml_detector(), FallbackDetector)
 
 
 def test_get_detector_resolves_paddle_to_a_fallback_detector() -> None:
-    assert isinstance(get_detector("paddle"), FallbackDetector)
+    assert isinstance(get_detector("paddle", merge_overlap=False), FallbackDetector)
     assert isinstance(paddle_detector(), FallbackDetector)
 
 
@@ -315,7 +408,7 @@ def _break_paddle_full(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_get_detector_resolves_paddle_rec_to_a_fallback_detector() -> None:
-    assert isinstance(get_detector("paddle-rec"), FallbackDetector)
+    assert isinstance(get_detector("paddle-rec", merge_overlap=False), FallbackDetector)
     assert isinstance(paddle_rec_detector(), FallbackDetector)
 
 

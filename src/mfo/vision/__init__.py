@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from mfo.vision.detect import (
     DEFAULT_CLASS_LABELS,
+    DEFAULT_OVERLAP_FRAC,
     BaselineConfig,
     ConnectedComponentsDetector,
     DetectedRegion,
     DetectionModel,
     DetectorDependencyError,
     FallbackDetector,
+    MergingDetector,
     MLDetector,
     MLDetectorConfig,
     OnnxDetectionModel,
@@ -20,6 +22,7 @@ from mfo.vision.detect import (
     default_model_dir,
     detect_file,
     get_detector,
+    merge_overlapping_regions,
     ml_detector,
     non_max_suppression,
 )
@@ -62,12 +65,14 @@ from mfo.vision.preprocess import (
 __all__ = [
     # detect
     "DEFAULT_CLASS_LABELS",
+    "DEFAULT_OVERLAP_FRAC",
     "BaselineConfig",
     "ConnectedComponentsDetector",
     "DetectedRegion",
     "DetectionModel",
     "DetectorDependencyError",
     "FallbackDetector",
+    "MergingDetector",
     "MLDetector",
     "MLDetectorConfig",
     "OnnxDetectionModel",
@@ -78,6 +83,7 @@ __all__ = [
     "default_model_dir",
     "detect_file",
     "get_detector",
+    "merge_overlapping_regions",
     "ml_detector",
     "non_max_suppression",
     # images

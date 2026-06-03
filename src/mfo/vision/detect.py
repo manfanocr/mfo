@@ -240,6 +240,100 @@ def non_max_suppression(
     return kept
 
 
+# Default overlap (as a fraction of the smaller box) at which two regions are merged. Detectors
+# often split one speech bubble into several overlapping line-boxes; merging them gives one region
+# per bubble so OCR reads the whole bubble at once and text renders in a single box (FR-39 spirit).
+DEFAULT_OVERLAP_FRAC = 0.2
+
+
+def _overlap_frac(a: BBox, b: BBox) -> float:
+    """Intersection area as a fraction of the *smaller* box's area (0 when the boxes are disjoint).
+
+    Relative-to-smaller (rather than IoU) is the right signal here: a short line-box sitting inside
+    a taller one barely moves IoU but overlaps almost all of the smaller box.
+    """
+    inter_w = max(0.0, min(a.right, b.right) - max(a.x, b.x))
+    inter_h = max(0.0, min(a.bottom, b.bottom) - max(a.y, b.y))
+    inter = inter_w * inter_h
+    if inter == 0.0:
+        return 0.0
+    smaller = min(a.area, b.area)
+    return inter / smaller if smaller > 0 else 0.0
+
+
+def merge_overlapping_regions(
+    regions: Sequence[DetectedRegion], *, overlap_frac: float = DEFAULT_OVERLAP_FRAC
+) -> list[DetectedRegion]:
+    """Merge regions whose boxes overlap into one box per cluster (e.g. a bubble's stacked lines).
+
+    Two regions join when their boxes overlap by at least ``overlap_frac`` of the smaller box's
+    area; the relation is transitive (union-find), so a run of overlapping line-boxes collapses to a
+    single region. A merged region takes the union box, the most conservative (minimum) member
+    confidence (I-4), and the largest member's type. Its recognized ``text`` (from a det+rec
+    detector) is intentionally **dropped** so the OCR stage re-recognizes the whole merged crop —
+    getting correct multi-line order rather than stitched per-line guesses. Regions a detector
+    marked IGNORE (panels/frames) are passed through untouched and never merged.
+    """
+    ignored = [r for r in regions if r.status is RegionStatus.IGNORE]
+    candidates = [r for r in regions if r.status is not RegionStatus.IGNORE]
+
+    parent = list(range(len(candidates)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(len(candidates)):
+        for j in range(i + 1, len(candidates)):
+            frac = _overlap_frac(candidates[i].bbox, candidates[j].bbox)
+            if frac > 0.0 and frac >= overlap_frac:
+                parent[find(i)] = find(j)
+
+    groups: dict[int, list[DetectedRegion]] = {}
+    for i, region in enumerate(candidates):
+        groups.setdefault(find(i), []).append(region)
+
+    merged: list[DetectedRegion] = []
+    for members in groups.values():
+        if len(members) == 1:
+            merged.append(members[0])
+            continue
+        largest = max(members, key=lambda m: m.bbox.area)
+        merged.append(
+            DetectedRegion(
+                bbox=BBox.union([m.bbox for m in members]),
+                type=largest.type,
+                confidence=min(m.confidence for m in members),
+                status=RegionStatus.AUTO,
+            )
+        )
+
+    out = [*merged, *ignored]
+    out.sort(key=lambda r: (r.bbox.y, r.bbox.x))
+    return out
+
+
+class MergingDetector:
+    """Wraps a detector and merges its overlapping output boxes (one region per bubble).
+
+    Reports a composite ``name``/``version`` folding the overlap threshold so the detection cache
+    (NFR-8) re-runs when the threshold changes.
+    """
+
+    def __init__(
+        self, inner: RegionDetector, *, overlap_frac: float = DEFAULT_OVERLAP_FRAC
+    ) -> None:
+        self._inner = inner
+        self._overlap_frac = overlap_frac
+        self.name = f"{inner.name}+merge"
+        self.version = f"{inner.version}+o{overlap_frac}"
+
+    def detect(self, image: Uint8Array) -> list[DetectedRegion]:
+        return merge_overlapping_regions(self._inner.detect(image), overlap_frac=self._overlap_frac)
+
+
 def default_model_dir() -> Path:
     """Where ML model weights are cached (overridable via the ``MFO_MODEL_DIR`` env var)."""
     override = os.environ.get("MFO_MODEL_DIR")
@@ -685,18 +779,28 @@ _FACTORIES: dict[str, Callable[..., RegionDetector]] = {
 }
 
 
-def get_detector(name: str = "baseline", *, lang: str | None = None) -> RegionDetector:
+def get_detector(
+    name: str = "baseline",
+    *,
+    lang: str | None = None,
+    merge_overlap: bool = True,
+    overlap_frac: float = DEFAULT_OVERLAP_FRAC,
+) -> RegionDetector:
     """Resolve a detector by config name (NFR-17). Raises ``ValueError`` if unknown.
 
     ``lang`` (the project's source language) is forwarded to detectors that recognize text (the
-    fused ``paddle-rec``); detection-only detectors ignore it.
+    fused ``paddle-rec``); detection-only detectors ignore it. When ``merge_overlap`` (the default)
+    the detector is wrapped so overlapping output boxes are merged into one region per bubble.
     """
     try:
         factory = _FACTORIES[name]
     except KeyError:
         known = ", ".join(sorted(_FACTORIES))
         raise ValueError(f"unknown detector {name!r}; available: {known}") from None
-    return factory(lang=lang)
+    detector = factory(lang=lang)
+    if merge_overlap:
+        detector = MergingDetector(detector, overlap_frac=overlap_frac)
+    return detector
 
 
 def detect_file(path: Path, detector: RegionDetector) -> list[DetectedRegion]:

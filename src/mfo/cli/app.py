@@ -79,6 +79,7 @@ from mfo.storage import (
     write_mapping,
 )
 from mfo.vision import (
+    DEFAULT_OVERLAP_FRAC,
     OcrDependencyError,
     PageOrder,
     PreprocessConfig,
@@ -262,6 +263,22 @@ def detect(
             "--detector", help="Region detector: 'baseline', 'ml', 'paddle', or 'paddle-rec'."
         ),
     ] = "baseline",
+    merge_overlap: Annotated[
+        bool,
+        typer.Option(
+            "--merge-overlap/--no-merge-overlap",
+            help="Merge overlapping detected boxes into one region per bubble (on by default).",
+        ),
+    ] = True,
+    overlap_frac: Annotated[
+        float,
+        typer.Option(
+            "--overlap-frac",
+            min=0.0,
+            max=1.0,
+            help="Overlap (fraction of the smaller box) at which two regions merge; lower = more.",
+        ),
+    ] = DEFAULT_OVERLAP_FRAC,
     force: Annotated[
         bool, typer.Option("--force", help="Re-detect even if a current result is cached.")
     ] = False,
@@ -272,16 +289,23 @@ def detect(
     detector when available (pip install 'mfo[detect]') and 'paddle' uses PaddleOCR's text detector
     (pip install 'mfo[ocr-paddle]'). 'paddle-rec' runs PaddleOCR's full detect+recognize pipeline so
     `mfo ocr` can reuse its text without a second pass. All transparently fall back to the baseline
-    if their dependency or model is absent.
+    if their dependency or model is absent. Overlapping boxes (e.g. a bubble split into several
+    lines) are merged into one region by default; tune with --overlap-frac or turn off with
+    --no-merge-overlap.
     """
     with _open_store(path) as store:
         try:
-            engine = get_detector(detector, lang=store.project.source_lang)
+            engine = get_detector(
+                detector,
+                lang=store.project.source_lang,
+                merge_overlap=merge_overlap,
+                overlap_frac=overlap_frac,
+            )
         except ValueError as exc:
             typer.secho(str(exc), fg=typer.colors.RED, err=True)
             raise typer.Exit(code=1) from None
         signature = f"{engine.name}@{engine.version}"
-        save_detect_config(store, detector)
+        save_detect_config(store, detector, merge_overlap=merge_overlap, overlap_frac=overlap_frac)
         regions = detect_regions(
             store,
             detect=lambda image_path: detect_file(image_path, engine),

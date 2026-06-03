@@ -46,6 +46,7 @@ from mfo.storage import (
     translate_units,
 )
 from mfo.vision import (
+    DEFAULT_OVERLAP_FRAC,
     OCREngine,
     PageOrder,
     PreprocessConfig,
@@ -347,10 +348,20 @@ def save_preprocess_config(store: ProjectStore, config: PreprocessConfig) -> Non
     store.set_project(store.project.model_copy(update={"config": project_config}))
 
 
-def save_detect_config(store: ProjectStore, detector: str) -> None:
-    """Persist the chosen detector so ``mfo run`` uses the same one (NFR-17, FR-48)."""
+def save_detect_config(
+    store: ProjectStore,
+    detector: str,
+    *,
+    merge_overlap: bool = True,
+    overlap_frac: float = DEFAULT_OVERLAP_FRAC,
+) -> None:
+    """Persist the detector + overlap-merge knobs so ``mfo run`` reproduces detection (NFR-17)."""
     project_config = dict(store.project.config)
-    project_config["detect"] = {"detector": detector}
+    project_config["detect"] = {
+        "detector": detector,
+        "merge_overlap": merge_overlap,
+        "overlap_frac": overlap_frac,
+    }
     store.set_project(store.project.model_copy(update={"config": project_config}))
 
 
@@ -458,7 +469,10 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
         stages.append(
             DetectStage(
                 get_detector(
-                    detect_config.get("detector", "baseline"), lang=store.project.source_lang
+                    detect_config.get("detector", "baseline"),
+                    lang=store.project.source_lang,
+                    merge_overlap=detect_config.get("merge_overlap", True),
+                    overlap_frac=detect_config.get("overlap_frac", DEFAULT_OVERLAP_FRAC),
                 )
             )
         )

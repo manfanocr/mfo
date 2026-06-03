@@ -232,6 +232,20 @@ or span most of the page width are auto-marked **ignore** (kept in the data, but
 rendering, and the review queue). `paddle`/`ml` box actual text and avoid this. You can always fix
 detection by hand in `mfo review` (draw, move, merge, split, delete regions).
 
+**Overlap merging (on by default).** Detectors often split one speech bubble into several
+overlapping line-boxes. By default mfo merges regions whose boxes overlap into one region per
+bubble, so OCR reads the whole bubble at once and the translation renders in a single box. Tune how
+eagerly it merges with `--overlap-frac` (the fraction of the *smaller* box that must overlap; lower
+= more merging), or turn it off entirely:
+
+```bash
+mfo detect <proj> --overlap-frac 0.1        # merge more aggressively
+mfo detect <proj> --no-merge-overlap        # keep every detected box separate
+```
+
+For a det+rec detector (`paddle-rec`), a merged bubble's per-line text is dropped so `mfo ocr`
+re-reads the whole merged crop (correct multi-line order); un-merged boxes keep their text.
+
 ### Using the `ml` detector
 
 The ML detector needs an ONNX export of a comic/text detector. Cache it where mfo looks, or point
