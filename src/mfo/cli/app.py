@@ -76,6 +76,7 @@ from mfo.vision import (
     PageOrder,
     PreprocessConfig,
     detect_file,
+    detect_panels_file,
     discover_images,
     get_detector,
     get_ocr_engine,
@@ -423,15 +424,27 @@ def order(
         ReadingDirection | None,
         typer.Option(help="Reading direction (defaults to the project's)."),
     ] = None,
+    panels: Annotated[
+        bool,
+        typer.Option(
+            "--panels/--no-panels",
+            help="Refine order with best-effort panel detection (reads page images — FR-18).",
+        ),
+    ] = False,
     force: Annotated[
         bool, typer.Option("--force", help="Recompute even if a current order is cached.")
     ] = False,
 ) -> None:
-    """Infer reading order for detected regions (offline, column-aware; RTL/LTR — FR-16/17)."""
+    """Infer reading order for detected regions (offline, column-aware; RTL/LTR — FR-16/17/18)."""
     with _open_store(path) as store:
         resolved = direction or store.project.reading_direction
-        save_structure_config(store, resolved)
-        regions = assign_reading_order(store, direction=resolved, force=force)
+        save_structure_config(store, resolved, panels=panels)
+        regions = assign_reading_order(
+            store,
+            direction=resolved,
+            detect_panels=detect_panels_file if panels else None,
+            force=force,
+        )
     typer.secho(f"Ordered {len(regions)} region(s) ({resolved}).", fg=typer.colors.GREEN)
 
 

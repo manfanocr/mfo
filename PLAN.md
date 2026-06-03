@@ -184,7 +184,7 @@ plugs into.
 - **Satisfies:** FR-11, FR-19; G-3; §10.5.
 - **DoD:** Units formed and persisted with ordered region refs; tested on sample.
 
-### Batch 3.3 — Panel detection (optional, light)
+### Batch 3.3 — Panel detection (optional, light) ✅ *(landed — see CHANGELOG)*
 - **Scope:** Best-effort panel boundary detection to refine reading order; off if not helpful.
 - **Satisfies:** FR-18; SG-1 groundwork.
 - **DoD:** Panel-aware ordering improves a known tricky sample, or is cleanly disabled.
@@ -303,7 +303,7 @@ plugs into.
 - [x] M0 Foundation
 - [x] M1 Import & Preprocess
 - [x] M2 Vision *(MVP scope: 2.1 detect, 2.3 OCR, 2.4 confidence; 2.2 optional ML detector landed)*
-- [x] M3 Structure *(MVP scope: 3.1 reading order, 3.2 dialogue grouping; 3.3 panel detection is optional)*
+- [x] M3 Structure *(MVP scope: 3.1 reading order, 3.2 dialogue grouping; 3.3 optional panel detection landed)*
 - [x] M4 Translation *(MVP scope: 4.1 adapter+context, 4.2 glossary/style, 4.3 mapping; 4.4 API adapter is optional)*
 - [x] M5 Render & Export
 - [x] M6 Review Editor *(MVP complete — M0–M6 satisfy the DoD §21)*

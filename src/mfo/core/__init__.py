@@ -47,7 +47,7 @@ from mfo.core.pipeline import (
     StageStatus,
     StateStore,
 )
-from mfo.core.reading_order import order_regions
+from mfo.core.reading_order import order_regions, order_regions_by_panels
 from mfo.core.traceability import selected_candidate, selected_text
 
 __all__ = [
@@ -60,6 +60,7 @@ __all__ = [
     "build_context",
     # reading order
     "order_regions",
+    "order_regions_by_panels",
     # traceability
     "selected_candidate",
     "selected_text",

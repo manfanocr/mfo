@@ -51,6 +51,7 @@ from mfo.vision import (
     PreprocessConfig,
     RegionDetector,
     detect_file,
+    detect_panels_file,
     discover_images,
     get_detector,
     get_ocr_engine,
@@ -158,19 +159,29 @@ class DetectStage:
 
 
 class StructureStage:
-    """Assign each region a reading-order index (idempotent, offline, geometry-only)."""
+    """Assign each region a reading-order index (idempotent; offline unless panel-aware).
+
+    With ``panels`` enabled the order is refined frame-by-frame using best-effort panel detection
+    (FR-18), which reads the page images; otherwise it stays the offline, geometry-only heuristic.
+    """
 
     name = STRUCTURE_STAGE
     deps: tuple[str, ...] = (DETECT_STAGE,)
 
-    def __init__(self, direction: ReadingDirection) -> None:
+    def __init__(self, direction: ReadingDirection, *, panels: bool = False) -> None:
         self._direction = direction
+        self._panels = panels
 
     def inputs_hash(self, ctx: ProjectStore) -> str:
-        return f"reading-order@1|{self._direction.value}"
+        mode = "panels" if self._panels else "flat"
+        return f"reading-order@2|{self._direction.value}|{mode}"
 
     def run(self, ctx: ProjectStore) -> None:
-        assign_reading_order(ctx, direction=self._direction)
+        assign_reading_order(
+            ctx,
+            direction=self._direction,
+            detect_panels=detect_panels_file if self._panels else None,
+        )
 
 
 class GroupStage:
@@ -343,10 +354,12 @@ def save_detect_config(store: ProjectStore, detector: str) -> None:
     store.set_project(store.project.model_copy(update={"config": project_config}))
 
 
-def save_structure_config(store: ProjectStore, direction: ReadingDirection) -> None:
-    """Persist the reading direction so ``mfo run`` reproduces the same order (FR-17, FR-48)."""
+def save_structure_config(
+    store: ProjectStore, direction: ReadingDirection, *, panels: bool = False
+) -> None:
+    """Persist the reading direction + panel mode so ``mfo run`` reproduces the order (FR-17/18)."""
     project_config = dict(store.project.config)
-    project_config["structure"] = {"direction": direction.value}
+    project_config["structure"] = {"direction": direction.value, "panels": panels}
     store.set_project(store.project.model_copy(update={"config": project_config}))
 
 
@@ -397,8 +410,9 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
 
     The import stage only exists once a source has been configured (via ``mfo import``); the
     preprocess, detect, structure (reading-order), and group (dialogue-chain) stages use their saved
-    config if present, otherwise their zero-dependency defaults — structure and grouping are
-    geometry-only so they stay on the offline path. OCR is opt-in: its default engine (manga-ocr) is
+    config if present, otherwise their zero-dependency defaults — grouping (and structure, unless
+    its optional panel-aware mode is enabled) is geometry-only so it stays on the offline path. OCR
+    is opt-in: its default engine (manga-ocr) is
     an optional install, so the OCR stage joins the pipeline only once an engine has been chosen via
     ``mfo ocr``. Translation (consuming both the OCR text and the groups) is likewise opt-in via
     ``mfo translate`` and only joins once OCR is configured, since it depends on it. Rendering
@@ -428,7 +442,7 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
         direction = ReadingDirection(
             structure_config.get("direction", store.project.reading_direction.value)
         )
-        stages.append(StructureStage(direction))
+        stages.append(StructureStage(direction, panels=structure_config.get("panels", False)))
 
         group_config = config.get("group") or {}
         stages.append(GroupStage(group_config.get("max_gap_ratio", DEFAULT_GAP_RATIO)))

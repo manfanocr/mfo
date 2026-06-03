@@ -9,6 +9,27 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 3.3 — Panel detection** (M3 Structure — optional, light, post-MVP):
+  - `mfo.vision.panels`: a best-effort, dependency-light panel detector (recursive X–Y cut over the page's
+    white gutters, using only OpenCV/NumPy — no model download, NFR-21). `detect_panels` recovers frame
+    rectangles for the common grid layouts as source-pixel `BBox`es; a borderless/art-bleed page simply
+    yields one whole-page panel so the caller degrades to the flat heuristic (best-effort — FR-18).
+    `detect_panels_file` loads a page read-only (I-1).
+  - `mfo.core.reading_order.order_regions_by_panels`: pure, offline panel-aware ordering — panels are read
+    in reading order, each panel's regions in reading order, then concatenated; regions outside every frame
+    fall to the end. This fixes the layout the flat tier scan misorders (a tall panel spanning tiers beside
+    a stack of shorter ones), where flat yields `rt, l, rb` and panel-aware the human `rt, rb, l` (DoD 3.3).
+    The shared tier logic was refactored into `_order_indices`, reused by both region and panel ordering.
+  - `assign_reading_order` gained an injected, optional `detect_panels` callable (storage stays imaging-free,
+    mirroring the detect stage); the panel mode is folded into the per-page signature so toggling it re-runs
+    (NFR-8) while the default path stays the fully-offline geometry heuristic. Provenance records `panels` and
+    `panel_count`. Exposed via `mfo order --panels` and the `StructureStage` (`reading-order@2`), persisted in
+    project config so `mfo run` reproduces it (FR-48).
+  - Tests: detector coverage (blank → none; single frame → one; 2×2 grid → four; tall-panel-beside-stack → three;
+    speck filtered; config override; read-only file load); pure-ordering coverage (flat misorders vs. panel-aware
+    corrects; multi-region-per-panel; outside-panel regions last; empty-panel fallback; empty input); and storage
+    coverage (panel-aware reorders + records provenance; flat records none; toggling re-runs; panel mode idempotent).
+  - Satisfies: FR-18; SG-1 groundwork.
 - **Batch 2.2 — ML detector adapter** (M2 Vision — optional, post-MVP):
   - `mfo.vision.detect`: a trained bubble/text detector behind the existing `RegionDetector` interface,
     fully optional so the offline core is untouched (I-7/I-8, NFR-21/22). `OnnxDetectionModel` imports
@@ -534,8 +555,9 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   complete, the MVP Definition of Done (§21) is satisfied** — a user can import a folder of pages, detect &
   OCR, get context-aware translations, review/edit in place, export, and reopen later with all mappings
   intact. The optional ML detector (batch 2.2 — a lazy, fallback-guarded ONNX detector behind the `detect`
-  extra) has since landed off the critical path; remaining optional batches: 4.4 (API translation adapter)
-  and 3.3 (panel detection).
+  extra) and optional panel detection (batch 3.3 — best-effort X–Y-cut panel boundaries refining reading
+  order via `mfo order --panels`, cleanly disabled by default) have since landed off the critical path; the
+  one remaining optional batch is 4.4 (API translation adapter).
 
 <!--
 Template for a landed batch:

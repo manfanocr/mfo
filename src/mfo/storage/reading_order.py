@@ -14,12 +14,19 @@ on an explicit ``force``.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable, Sequence
+from pathlib import Path
 
 from mfo.core import Page, Region
 from mfo.core.enums import ReadingDirection
-from mfo.core.reading_order import order_regions
+from mfo.core.geometry import BBox
+from mfo.core.reading_order import order_regions, order_regions_by_panels
 from mfo.storage.hashing import content_key
 from mfo.storage.project import ProjectStore
+
+# A page → panel-boxes callable. Injected by the CLI (which wires the vision detector) so storage
+# stays free of any imaging dependency, mirroring the detect stage; ``None`` keeps the offline path.
+DetectPanels = Callable[[Path], Sequence[BBox]]
 
 
 def _regions_fingerprint(regions: list[Region]) -> str:
@@ -39,9 +46,17 @@ def assign_reading_order(
     store: ProjectStore,
     *,
     direction: ReadingDirection,
+    detect_panels: DetectPanels | None = None,
     force: bool = False,
 ) -> list[Region]:
-    """Assign each region a ``reading_order_index`` per page; returns the regions reordered."""
+    """Assign each region a ``reading_order_index`` per page; returns the regions reordered.
+
+    When ``detect_panels`` is supplied the order is refined panel-by-panel (FR-18): each page's
+    image is read (read-only, I-1) to recover its panels and regions are ordered within them. The
+    panel mode is folded into the signature so toggling it re-runs (NFR-8); with no detector the
+    behaviour is the flat, fully-offline heuristic.
+    """
+    panel_mode = "panels" if detect_panels is not None else "flat"
     updated: list[Region] = []
     for page in store.db.list(Page, order_by="idx"):
         regions = store.db.list(Region, where=("page_id", page.id))
@@ -49,24 +64,27 @@ def assign_reading_order(
             continue
 
         page_signature = content_key(
-            f"reading-order|{direction.value}", _regions_fingerprint(regions)
+            f"reading-order|{direction.value}|{panel_mode}", _regions_fingerprint(regions)
         )
         if not force and page.structure.get("signature") == page_signature:
             continue
 
-        ordered = order_regions(regions, direction=direction)
+        structure: dict[str, object] = {
+            "signature": page_signature,
+            "direction": direction.value,
+            "panels": detect_panels is not None,
+        }
+        if detect_panels is not None:
+            panels = list(detect_panels(store.layout.root / page.image_path))
+            ordered = order_regions_by_panels(regions, panels, direction=direction)
+            structure["panel_count"] = len(panels)
+        else:
+            ordered = order_regions(regions, direction=direction)
+        structure["count"] = len(ordered)
+
         for index, region in enumerate(ordered):
             reordered = region.model_copy(update={"reading_order_index": index})
             store.db.save(reordered)
             updated.append(reordered)
-        new_page = page.model_copy(
-            update={
-                "structure": {
-                    "signature": page_signature,
-                    "direction": direction.value,
-                    "count": len(ordered),
-                }
-            }
-        )
-        store.db.save(new_page)
+        store.db.save(page.model_copy(update={"structure": structure}))
     return updated

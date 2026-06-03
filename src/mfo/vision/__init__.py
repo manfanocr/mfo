@@ -45,6 +45,12 @@ from mfo.vision.ocr import (
     manga_ocr_engine,
     recognize_file,
 )
+from mfo.vision.panels import (
+    Panel,
+    PanelConfig,
+    detect_panels,
+    detect_panels_file,
+)
 from mfo.vision.preprocess import (
     PreprocessConfig,
     detect_orientation,
@@ -93,6 +99,11 @@ __all__ = [
     "get_ocr_engine",
     "manga_ocr_engine",
     "recognize_file",
+    # panels
+    "Panel",
+    "PanelConfig",
+    "detect_panels",
+    "detect_panels_file",
     # preprocess
     "PreprocessConfig",
     "detect_orientation",
