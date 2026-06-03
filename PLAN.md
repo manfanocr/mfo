@@ -334,7 +334,7 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
   `mfo ocr --reuse-detection/--no-reuse-detection`; `get_detector(..., lang=)`; USER_GUIDE +
   CHANGELOG. See CHANGELOG.
 
-### Batch 8.1 — Parallel processing & performance tuning
+### Batch 8.1 — Parallel processing & performance tuning ✅ *(landed 2026-06-03)*
 - **Scope:** Process pages concurrently across the heavy stages (detect/OCR/translate/render) with a
   configurable worker count (`--jobs`); a small profiling/benchmark harness; cache-key audit so
   parallelism never corrupts or races the per-input cache. Keep determinism (stable IDs, ordered
@@ -442,7 +442,7 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
 - [x] M5 Render & Export
 - [x] M6 Review Editor *(MVP complete — M0–M6 satisfy the DoD §21)*
 - [x] M7 AI Refinement *(7.1 assist adapter, 7.2 modes, 7.3 confidence-driven review)*
-- [ ] M8 Hardening & Stretch *(planned into batches 8.0–8.11; 8.0 fused detect+recognize landed)*
+- [ ] M8 Hardening & Stretch *(planned into batches 8.0–8.11; 8.0 fused detect+recognize, 8.1 parallel processing landed)*
 
 When a batch lands: tick it, and append a dated entry to [CHANGELOG.md](CHANGELOG.md) with the
 spec IDs it satisfied.

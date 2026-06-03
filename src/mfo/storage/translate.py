@@ -23,6 +23,7 @@ import hashlib
 import json
 import math
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from mfo.core import OCRSpan, Page, Region, TranslationCandidate, TranslationUnit
@@ -34,6 +35,7 @@ from mfo.core.glossary import (
     apply_glossary,
     glossary_terms,
 )
+from mfo.core.parallel import parallel_map
 from mfo.storage.hashing import content_key
 from mfo.storage.project import ProjectStore
 
@@ -119,6 +121,15 @@ def _apply_translation(
     )
 
 
+@dataclass(frozen=True)
+class _Job:
+    page: Page
+    units: list[TranslationUnit]
+    sources: list[str]
+    contexts: list[dict[str, Any]]
+    page_signature: str
+
+
 def translate_units(
     store: ProjectStore,
     *,
@@ -129,11 +140,17 @@ def translate_units(
     glossary: Sequence[GlossaryEntry] = (),
     window: int = DEFAULT_NEIGHBOR_WINDOW,
     force: bool = False,
+    jobs: int = 1,
 ) -> list[TranslationUnit]:
-    """Translate every page's units with context/glossary/style; returns those (re)translated."""
-    updated: list[TranslationUnit] = []
+    """Translate every page's units with context/glossary/style; returns those (re)translated.
+
+    Pages are planned and persisted serially (single SQLite connection, deterministic order); only
+    the injected ``translate`` callable runs concurrently across pages when ``jobs > 1`` — within a
+    page its units are translated in reading order (NFR-5/6/7).
+    """
     pages = store.db.list(Page, order_by="idx")
     page_count = len(pages)
+    pending: list[_Job] = []
     for page in pages:
         units = store.db.list(TranslationUnit, where=("page_id", page.id))
         if not units:
@@ -173,10 +190,31 @@ def translate_units(
         )
         if not force and page.translation.get("signature") == page_signature:
             continue
+        pending.append(
+            _Job(
+                page=page,
+                units=units,
+                sources=sources,
+                contexts=contexts,
+                page_signature=page_signature,
+            )
+        )
 
+    results_per_page = parallel_map(
+        lambda job: [
+            translate(source, context)
+            for source, context in zip(job.sources, job.contexts, strict=True)
+        ],
+        pending,
+        jobs=jobs,
+    )
+
+    updated: list[TranslationUnit] = []
+    for job, results in zip(pending, results_per_page, strict=True):
         new_units: list[TranslationUnit] = []
-        for unit, source, context in zip(units, sources, contexts, strict=True):
-            result = translate(source, context)
+        for unit, source, context, result in zip(
+            job.units, job.sources, job.contexts, results, strict=True
+        ):
             new_units.append(
                 _apply_translation(
                     unit,
@@ -189,10 +227,10 @@ def translate_units(
             )
         store.db.save_all(new_units)
         store.db.save(
-            page.model_copy(
+            job.page.model_copy(
                 update={
                     "translation": {
-                        "signature": page_signature,
+                        "signature": job.page_signature,
                         "translator": signature,
                         "target_lang": target_lang,
                         "style": style.value,

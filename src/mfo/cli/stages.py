@@ -122,8 +122,9 @@ class PreprocessStage:
     name = PREPROCESS_STAGE
     deps: tuple[str, ...] = (IMPORT_STAGE,)
 
-    def __init__(self, config: PreprocessConfig) -> None:
+    def __init__(self, config: PreprocessConfig, *, jobs: int = 1) -> None:
         self._config = config
+        self._jobs = jobs
 
     def inputs_hash(self, ctx: ProjectStore) -> str:
         return self._config.signature()
@@ -133,6 +134,7 @@ class PreprocessStage:
             ctx,
             transform=lambda path: preprocess_file(path, self._config),
             signature=self._config.signature(),
+            jobs=self._jobs,
         )
 
 
@@ -142,8 +144,9 @@ class DetectStage:
     name = DETECT_STAGE
     deps: tuple[str, ...] = (PREPROCESS_STAGE,)
 
-    def __init__(self, detector: RegionDetector) -> None:
+    def __init__(self, detector: RegionDetector, *, jobs: int = 1) -> None:
         self._detector = detector
+        self._jobs = jobs
 
     def _signature(self) -> str:
         return f"{self._detector.name}@{self._detector.version}"
@@ -156,6 +159,7 @@ class DetectStage:
             ctx,
             detect=lambda path: detect_file(path, self._detector),
             signature=self._signature(),
+            jobs=self._jobs,
         )
 
 
@@ -207,8 +211,9 @@ class OcrStage:
     name = OCR_STAGE
     deps: tuple[str, ...] = (DETECT_STAGE,)
 
-    def __init__(self, engine: OCREngine) -> None:
+    def __init__(self, engine: OCREngine, *, jobs: int = 1) -> None:
         self._engine = engine
+        self._jobs = jobs
 
     def _signature(self) -> str:
         return f"{self._engine.name}@{self._engine.version}"
@@ -221,6 +226,7 @@ class OcrStage:
             ctx,
             recognize=lambda path, bbox: recognize_file(path, bbox, self._engine),
             signature=self._signature(),
+            jobs=self._jobs,
         )
 
 
@@ -238,12 +244,14 @@ class TranslateStage:
         target_lang: str,
         style: TranslationStyle = TranslationStyle.BALANCED,
         glossary: tuple[GlossaryEntry, ...] = (),
+        jobs: int = 1,
     ) -> None:
         self._translator = translator
         self._source_lang = source_lang
         self._target_lang = target_lang
         self._style = style
         self._glossary = glossary
+        self._jobs = jobs
 
     def _signature(self) -> str:
         return f"{self._translator.name}@{self._translator.version}"
@@ -274,6 +282,7 @@ class TranslateStage:
             target_lang=self._target_lang,
             style=self._style,
             glossary=self._glossary,
+            jobs=self._jobs,
         )
 
 
@@ -288,8 +297,9 @@ class RenderStage:
     name = RENDER_STAGE
     deps: tuple[str, ...] = (DETECT_STAGE,)
 
-    def __init__(self, config: MaskConfig) -> None:
+    def __init__(self, config: MaskConfig, *, jobs: int = 1) -> None:
         self._config = config
+        self._jobs = jobs
 
     def inputs_hash(self, ctx: ProjectStore) -> str:
         return self._config.signature()
@@ -299,6 +309,7 @@ class RenderStage:
             ctx,
             mask=lambda path, boxes: mask_file(path, boxes, self._config),
             signature=self._config.signature(),
+            jobs=self._jobs,
         )
 
 
@@ -312,11 +323,16 @@ class CompositeStage:
     name = COMPOSITE_STAGE
     deps: tuple[str, ...] = (RENDER_STAGE, TRANSLATE_STAGE)
 
+    def __init__(self, *, jobs: int = 1) -> None:
+        self._jobs = jobs
+
     def inputs_hash(self, ctx: ProjectStore) -> str:
         return COMPOSITE_SIGNATURE
 
     def run(self, ctx: ProjectStore) -> None:
-        composite_pages(ctx, composite=composite_page_file, signature=COMPOSITE_SIGNATURE)
+        composite_pages(
+            ctx, composite=composite_page_file, signature=COMPOSITE_SIGNATURE, jobs=self._jobs
+        )
 
 
 def save_import_config(
@@ -435,8 +451,12 @@ def save_glossary(store: ProjectStore, entries: tuple[GlossaryEntry, ...]) -> No
     store.set_project(store.project.model_copy(update={"config": project_config}))
 
 
-def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
+def build_pipeline(store: ProjectStore, *, jobs: int = 1) -> Pipeline[ProjectStore]:
     """Assemble the pipeline from the project's persisted configuration.
+
+    ``jobs`` is a runtime performance knob (the per-page worker count for the heavy stages); it is
+    deliberately kept out of every stage's ``inputs_hash`` so the cache key — and therefore which
+    pages are skipped and the data produced — is identical regardless of the worker count (NFR-8).
 
     The import stage only exists once a source has been configured (via ``mfo import``); the
     preprocess, detect, structure (reading-order), and group (dialogue-chain) stages use their saved
@@ -463,7 +483,7 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
             )
         )
         preprocess_config = config.get("preprocess") or {}
-        stages.append(PreprocessStage(PreprocessConfig(**preprocess_config)))
+        stages.append(PreprocessStage(PreprocessConfig(**preprocess_config), jobs=jobs))
 
         detect_config = config.get("detect") or {}
         stages.append(
@@ -473,7 +493,8 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
                     lang=store.project.source_lang,
                     merge_overlap=detect_config.get("merge_overlap", True),
                     overlap_frac=detect_config.get("overlap_frac", DEFAULT_OVERLAP_FRAC),
-                )
+                ),
+                jobs=jobs,
             )
         )
 
@@ -489,7 +510,7 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
         # Rendering (masking) only needs the detected regions, so it joins independently of OCR.
         render_config = config.get("render")
         if render_config is not None:
-            stages.append(RenderStage(MaskConfig(**render_config)))
+            stages.append(RenderStage(MaskConfig(**render_config), jobs=jobs))
 
         ocr_config = config.get("ocr")
         if ocr_config is not None:
@@ -497,7 +518,8 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
                 OcrStage(
                     get_ocr_engine(
                         ocr_config.get("engine", "manga-ocr"), lang=store.project.source_lang
-                    )
+                    ),
+                    jobs=jobs,
                 )
             )
 
@@ -514,12 +536,13 @@ def build_pipeline(store: ProjectStore) -> Pipeline[ProjectStore]:
                         target_lang=store.project.target_lang,
                         style=style,
                         glossary=entries_from_config(config.get("glossary")),
+                        jobs=jobs,
                     )
                 )
 
                 # Compositing needs both the masked base and the translations, so it joins only
                 # once rendering (masking) has been configured alongside translation.
                 if render_config is not None:
-                    stages.append(CompositeStage())
+                    stages.append(CompositeStage(jobs=jobs))
 
     return Pipeline(stages)

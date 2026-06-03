@@ -10,6 +10,24 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 
 ### M8 — Hardening & Stretch
 
+#### Added — Batch 8.1: Parallel processing & performance tuning (2026-06-03)
+- **`--jobs`: process pages concurrently.** The heavy per-page stages (preprocess, detect, OCR,
+  translate, render, composite) now run several pages at once. Each stage was restructured into a
+  *plan → compute → persist* shape: it reads its inputs and decides which pages need work serially,
+  runs only the pure injected callable (detect/recognize/translate/mask/composite) across pages on a
+  bounded thread pool (`mfo.core.parallel.parallel_map`, order-preserving), then writes every DB row
+  and file back serially in page order. So all SQLite access stays single-threaded and the result is
+  **byte-identical regardless of the worker count** — `--jobs` only affects speed, never output, and
+  it is deliberately kept out of every stage's cache key so unchanged pages still skip (NFR-8).
+  Threads (not processes) are used because the callables spend their time in native code or network
+  I/O that releases the GIL, and they share the one DB connection without pickling. Added `--jobs/-j`
+  (default `1`, `0` = auto/CPU count capped at 8) to `detect`, `ocr`, `translate`, `render`,
+  `export`, and `run`.
+- **`mfo bench` harness.** Force-re-runs each configured heavy stage and reports per-stage and total
+  wall-clock at a given `--jobs`, so the speedup is measurable on real pages; it times against an
+  in-memory run state so it doesn't disturb the project's pipeline progress. Documented in
+  `docs/USER_GUIDE.md` (parallelism + benchmarking). (NFR-5, NFR-6, NFR-7, NFR-8; §20)
+
 #### Added — Auto-merge overlapping detected regions (2026-06-03)
 - **One region per bubble.** Detectors (especially PaddleOCR) often split a single speech bubble
   into several overlapping line-boxes, which then OCR and render as fragments. `get_detector` now

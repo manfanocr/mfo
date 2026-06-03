@@ -25,6 +25,7 @@ from typing import Any, Protocol
 from mfo.core import Page, Region, RenderArtifact, TranslationUnit, selected_text
 from mfo.core.enums import RegionStatus, RegionType
 from mfo.core.geometry import BBox
+from mfo.core.parallel import parallel_map
 from mfo.storage.atomic import atomic_write_bytes
 from mfo.storage.hashing import content_key, sha256_file
 from mfo.storage.project import ProjectStore
@@ -51,6 +52,15 @@ class MaskResult(Protocol):
 MaskPage = Callable[[Path, list[BBox]], MaskResult]
 
 
+@dataclass(frozen=True)
+class _MaskJob:
+    page: Page
+    original: Path
+    boxes: list[BBox]
+    page_signature: str
+    stale: list[RenderArtifact]
+
+
 def _regions_fingerprint(regions: list[Region]) -> str:
     """A stable digest of a page's regions, so re-detection invalidates that page's mask."""
     digest = hashlib.sha256()
@@ -66,13 +76,15 @@ def mask_pages(
     mask: MaskPage,
     signature: str,
     force: bool = False,
+    jobs: int = 1,
 ) -> list[RenderArtifact]:
     """Mask the source text on every page, persisting a masked layer + mask. Returns new ones.
 
     Pages with no regions still get a masked layer (a faithful copy of the original) so the
-    downstream render always has a base to typeset onto.
+    downstream render always has a base to typeset onto. Pages are planned and persisted serially
+    (deterministic order); only the injected ``mask`` callable runs concurrently when ``jobs > 1``.
     """
-    created: list[RenderArtifact] = []
+    pending: list[_MaskJob] = []
     for page in store.db.list(Page, order_by="idx"):
         regions = store.db.list(Region, where=("page_id", page.id))
         boxes = [region.bbox for region in regions]
@@ -85,30 +97,42 @@ def mask_pages(
         current = [a for a in existing if a.params.get("kind") == MASK_KIND]
         if not force and any(a.params.get("signature") == page_signature for a in current):
             continue
+        pending.append(
+            _MaskJob(
+                page=page,
+                original=original,
+                boxes=boxes,
+                page_signature=page_signature,
+                stale=current,
+            )
+        )
 
+    results = parallel_map(lambda job: mask(job.original, job.boxes), pending, jobs=jobs)
+
+    created: list[RenderArtifact] = []
+    for job, result in zip(pending, results, strict=True):
         # Recompute (forced or stale): drop the prior mask artifact and its files first.
-        for artifact in current:
+        for artifact in job.stale:
             store.db.delete(RenderArtifact, where=("id", artifact.id))
             (store.layout.root / artifact.output_path).unlink(missing_ok=True)
             prior_mask = artifact.params.get("mask_path")
             if prior_mask:
                 (store.layout.root / prior_mask).unlink(missing_ok=True)
 
-        result = mask(original, boxes)
-        masked_rel = f"renders/{page.id}.masked.png"
-        mask_rel = f"renders/{page.id}.mask.png"
+        masked_rel = f"renders/{job.page.id}.masked.png"
+        mask_rel = f"renders/{job.page.id}.mask.png"
         atomic_write_bytes(store.layout.root / masked_rel, result.masked_png)
         atomic_write_bytes(store.layout.root / mask_rel, result.mask_png)
 
         artifact = RenderArtifact(
-            page_id=page.id,
+            page_id=job.page.id,
             output_path=masked_rel,
             params={
                 "kind": MASK_KIND,
-                "signature": page_signature,
+                "signature": job.page_signature,
                 "engine": signature,
                 "mask_path": mask_rel,
-                "regions": len(boxes),
+                "regions": len(job.boxes),
                 "metadata": dict(result.metadata),
             },
         )
@@ -152,6 +176,15 @@ class CompositeResult(Protocol):
 
 
 CompositePage = Callable[[Path, list[PagePlacement]], CompositeResult]
+
+
+@dataclass(frozen=True)
+class _CompositeJob:
+    page: Page
+    base_path: Path
+    placements: list[PagePlacement]
+    page_signature: str
+    stale: list[RenderArtifact]
 
 
 def _unit_sort_key(unit: TranslationUnit, regions: dict[str, Region]) -> tuple[float, str]:
@@ -217,6 +250,7 @@ def composite_pages(
     composite: CompositePage,
     signature: str,
     force: bool = False,
+    jobs: int = 1,
 ) -> list[RenderArtifact]:
     """Composite each page's translations onto its masked layer, persisting a render. Returns new.
 
@@ -226,8 +260,11 @@ def composite_pages(
     injected so storage stays image-free. A per-page signature folds the base layer's signature
     and a fingerprint of the placements, so an unchanged page skips (NFR-8) while a re-mask or
     re-translation correctly invalidates the render; a recompute drops the prior render first.
+
+    Pages are planned and persisted serially (deterministic order); only the injected ``composite``
+    callable runs concurrently across pages when ``jobs > 1`` (NFR-5/6/7).
     """
-    created: list[RenderArtifact] = []
+    pending: list[_CompositeJob] = []
     for page in store.db.list(Page, order_by="idx"):
         placements = page_placements(store, page)
 
@@ -248,25 +285,37 @@ def composite_pages(
         current = [a for a in existing if a.params.get("kind") == RENDER_KIND]
         if not force and any(a.params.get("signature") == page_signature for a in current):
             continue
+        pending.append(
+            _CompositeJob(
+                page=page,
+                base_path=base_path,
+                placements=placements,
+                page_signature=page_signature,
+                stale=current,
+            )
+        )
 
+    results = parallel_map(lambda job: composite(job.base_path, job.placements), pending, jobs=jobs)
+
+    created: list[RenderArtifact] = []
+    for job, result in zip(pending, results, strict=True):
         # Recompute (forced or stale): drop the prior render artifact and its file first.
-        for artifact in current:
+        for artifact in job.stale:
             store.db.delete(RenderArtifact, where=("id", artifact.id))
             (store.layout.root / artifact.output_path).unlink(missing_ok=True)
 
-        result = composite(base_path, placements)
-        render_rel = f"renders/{page.id}.render.png"
+        render_rel = f"renders/{job.page.id}.render.png"
         atomic_write_bytes(store.layout.root / render_rel, result.render_png)
 
         artifact = RenderArtifact(
-            page_id=page.id,
+            page_id=job.page.id,
             output_path=render_rel,
             params={
                 "kind": RENDER_KIND,
-                "signature": page_signature,
+                "signature": job.page_signature,
                 "engine": signature,
-                "base_path": base_path.relative_to(store.layout.root).as_posix(),
-                "placements": len(placements),
+                "base_path": job.base_path.relative_to(store.layout.root).as_posix(),
+                "placements": len(job.placements),
                 "overflow": result.overflow,
                 "metadata": dict(result.metadata),
             },

@@ -10,6 +10,7 @@ orchestrator), and ``review`` (launch the local web editor) are functional.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Annotated
 
@@ -20,6 +21,12 @@ from mfo.cli.config import build_settings
 from mfo.cli.logging import configure_logging, get_logger
 from mfo.cli.stages import (
     COMPOSITE_SIGNATURE,
+    COMPOSITE_STAGE,
+    DETECT_STAGE,
+    OCR_STAGE,
+    PREPROCESS_STAGE,
+    RENDER_STAGE,
+    TRANSLATE_STAGE,
     build_pipeline,
     composite_page_file,
     load_glossary,
@@ -38,6 +45,7 @@ from mfo.core import (
     DEFAULT_THRESHOLD,
     AssistMode,
     GlossaryEntry,
+    InMemoryStateStore,
     OCRSpan,
     Page,
     Project,
@@ -46,6 +54,7 @@ from mfo.core import (
     RenderArtifact,
     TranslationStyle,
     TranslationUnit,
+    resolve_jobs,
 )
 from mfo.core.grouping import DEFAULT_GAP_RATIO
 from mfo.language import (
@@ -98,6 +107,18 @@ app = typer.Typer(
     help="mfo — manga/manhua OCR & context-aware translation pipeline.",
 )
 log = get_logger("cli")
+
+# Shared performance knob for the heavy per-page stages: how many pages to process concurrently. It
+# never affects the cached result, only how fast it's produced (NFR-5/6/7); 0 = auto (CPU count).
+JobsOption = Annotated[
+    int,
+    typer.Option(
+        "--jobs",
+        "-j",
+        min=0,
+        help="Process this many pages concurrently (0 = auto/CPU count). Does not change results.",
+    ),
+]
 
 
 def _open_store(path: Path) -> ProjectStore:
@@ -282,6 +303,7 @@ def detect(
     force: Annotated[
         bool, typer.Option("--force", help="Re-detect even if a current result is cached.")
     ] = False,
+    jobs: JobsOption = 1,
 ) -> None:
     """Detect text regions on imported pages.
 
@@ -311,6 +333,7 @@ def detect(
             detect=lambda image_path: detect_file(image_path, engine),
             signature=signature,
             force=force,
+            jobs=resolve_jobs(jobs),
         )
         total = len(store.db.list(Region))
     new = len(regions)
@@ -342,6 +365,7 @@ def ocr(
     force: Annotated[
         bool, typer.Option("--force", help="Re-run OCR even if a current result is cached.")
     ] = False,
+    jobs: JobsOption = 1,
 ) -> None:
     """Recognize text on detected regions (default engine manga-ocr — install with mfo[ocr]).
 
@@ -364,6 +388,7 @@ def ocr(
                 signature=signature,
                 reuse_detection=reuse_detection,
                 force=force,
+                jobs=resolve_jobs(jobs),
             )
         except OcrDependencyError as exc:
             typer.secho(str(exc), fg=typer.colors.RED, err=True)
@@ -395,6 +420,7 @@ def translate(
     force: Annotated[
         bool, typer.Option("--force", help="Re-translate even if a current result is cached.")
     ] = False,
+    jobs: JobsOption = 1,
 ) -> None:
     """Translate units with context/glossary/style, offline (Argos default — mfo[translate])."""
     try:
@@ -425,6 +451,7 @@ def translate(
                 style=style,
                 glossary=glossary,
                 force=force,
+                jobs=resolve_jobs(jobs),
             )
         except TranslatorDependencyError as exc:
             typer.secho(str(exc), fg=typer.colors.RED, err=True)
@@ -695,6 +722,7 @@ def render(
     force: Annotated[
         bool, typer.Option("--force", help="Re-mask even if a current result is cached.")
     ] = False,
+    jobs: JobsOption = 1,
 ) -> None:
     """Mask/remove source text per page into a reversible masked layer (offline; FR-31/32/33)."""
     config = MaskConfig(pad=pad, border=border)
@@ -705,6 +733,7 @@ def render(
             mask=lambda image_path, boxes: mask_file(image_path, boxes, config),
             signature=config.signature(),
             force=force,
+            jobs=resolve_jobs(jobs),
         )
     typer.secho(f"Masked {len(artifacts)} page(s).", fg=typer.colors.GREEN)
 
@@ -724,10 +753,11 @@ def run(
     force: Annotated[
         bool, typer.Option("--force", help="Re-run stages even if their inputs are unchanged.")
     ] = False,
+    jobs: JobsOption = 1,
 ) -> None:
     """Run the processing pipeline."""
     with _open_store(path) as store:
-        pipeline = build_pipeline(store)
+        pipeline = build_pipeline(store, jobs=resolve_jobs(jobs))
         if not pipeline.stage_names():
             typer.secho(
                 "Nothing to run yet — import a source first with:  mfo import <project> <source>",
@@ -746,6 +776,66 @@ def run(
         typer.secho("Pipeline complete.", fg=typer.colors.GREEN)
 
 
+# The per-page heavy stages worth profiling; the rest (import/order/group) are bookkeeping.
+_BENCH_STAGES = (
+    PREPROCESS_STAGE,
+    DETECT_STAGE,
+    OCR_STAGE,
+    TRANSLATE_STAGE,
+    RENDER_STAGE,
+    COMPOSITE_STAGE,
+)
+
+
+@app.command()
+def bench(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+    jobs: JobsOption = 1,
+    stage: Annotated[str | None, typer.Option("--stage", help="Benchmark only this stage.")] = None,
+) -> None:
+    """Time the heavy pipeline stages at a given worker count (NFR-5/6/7).
+
+    Each configured heavy stage is force re-run in dependency order and timed, so you can compare
+    `--jobs 1` against, say, `--jobs 4` on a real volume. The timing run uses an in-memory state
+    store, so it re-does the work without disturbing the project's own pipeline state (the stage
+    outputs it recomputes are identical to a normal run — parallelism never changes the result).
+    """
+    with _open_store(path) as store:
+        pipeline = build_pipeline(store, jobs=resolve_jobs(jobs))
+        names = set(pipeline.stage_names())
+        if stage is not None and stage not in names:
+            typer.secho(
+                f"unknown or unconfigured stage {stage!r}; known: {sorted(names)}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        selected = [s for s in _BENCH_STAGES if s in names and (stage is None or s == stage)]
+        if not selected:
+            typer.secho(
+                "Nothing to benchmark — configure the heavy stages first (detect/ocr/translate/…).",
+                fg=typer.colors.YELLOW,
+            )
+            return
+
+        # An in-memory state store so the timing re-runs don't rewrite the on-disk pipeline state.
+        state = InMemoryStateStore()
+        page_count = len(store.db.list(Page))
+        typer.secho(
+            f"Benchmarking {len(selected)} stage(s) over {page_count} page(s) "
+            f"with --jobs {resolve_jobs(jobs)}:",
+            fg=typer.colors.CYAN,
+        )
+        total = 0.0
+        for name in selected:
+            start = time.perf_counter()
+            pipeline.run(store, state, only=name, force=True)
+            elapsed = time.perf_counter() - start
+            total += elapsed
+            typer.echo(f"  {name:<11} {elapsed:8.3f}s")
+        typer.secho(f"  {'total':<11} {total:8.3f}s", fg=typer.colors.GREEN)
+
+
 @app.command()
 def export(
     path: Annotated[Path, typer.Argument(help="Project directory.")],
@@ -756,6 +846,7 @@ def export(
             "--mapping", help="Export the source→OCR→translation mapping as JSON (FR-43)."
         ),
     ] = False,
+    jobs: JobsOption = 1,
 ) -> None:
     """Export translated pages + the source→OCR→translation mapping (FR-43, MVP-9)."""
     with _open_store(path) as store:
@@ -767,7 +858,12 @@ def export(
             typer.secho(f"Wrote mapping to {out_path}", fg=typer.colors.GREEN)
             return
         # Composite the selected translations onto the masked pages, then bundle the export.
-        composite_pages(store, composite=composite_page_file, signature=COMPOSITE_SIGNATURE)
+        composite_pages(
+            store,
+            composite=composite_page_file,
+            signature=COMPOSITE_SIGNATURE,
+            jobs=resolve_jobs(jobs),
+        )
         result = export_pages(store, out_dir)
 
     typer.secho(f"Exported {len(result.pages)} page(s) to {result.out_dir}", fg=typer.colors.GREEN)

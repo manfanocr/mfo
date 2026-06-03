@@ -208,3 +208,49 @@ def test_ignored_regions_are_skipped(tmp_path: Path) -> None:
         assert store.db.list(OCRSpan, where=("region_id", ignored.id)) == []
         # And the skip is idempotent — a second pass with the eligible region OCR'd is a no-op.
         assert ocr_regions(store, recognize=_recognizer(), signature="stub@1") == []
+
+
+def _project_with_pages(root: Path, source: Path, *, pages: int, regions: int) -> ProjectStore:
+    source.mkdir()
+    for i in range(pages):
+        Image.new("RGB", (40, 60), "white").save(source / f"p{i}.png")
+    store = ProjectStore.create(root, Project(name="vol", source_lang="ja", target_lang="en"))
+    import_pages(store, discover_images(source).images)
+    for page in store.db.list(Page, order_by="idx"):
+        store.db.save_all(
+            Region(
+                page_id=page.id,
+                bbox=BBox(x=j, y=page.index * 10 + j, width=5, height=8),
+                type=RegionType.BUBBLE,
+            )
+            for j in range(regions)
+        )
+    return store
+
+
+def _texts_by_region(store: ProjectStore) -> dict[tuple[int, int, int, int], str]:
+    out: dict[tuple[int, int, int, int], str] = {}
+    for region in store.db.list(Region):
+        spans = store.db.list(OCRSpan, where=("region_id", region.id))
+        b = region.bbox
+        out[(b.x, b.y, b.width, b.height)] = spans[0].text if spans else ""
+    return out
+
+
+def test_parallel_matches_serial_and_cache_still_skips(tmp_path: Path) -> None:
+    # Recognition is a pure function of the box, so parallel and serial must agree (I-5).
+    def recognize(path: Path, bbox: BBox) -> RecognizedText:
+        return RecognizedText(text=f"{path.stem}:{bbox.x},{bbox.y}", confidence=0.5)
+
+    serial = _project_with_pages(tmp_path / "s", tmp_path / "ssrc", pages=4, regions=3)
+    with serial:
+        ocr_regions(serial, recognize=recognize, signature="stub@1", jobs=1)
+        serial_texts = _texts_by_region(serial)
+
+    parallel = _project_with_pages(tmp_path / "p", tmp_path / "psrc", pages=4, regions=3)
+    with parallel:
+        created = ocr_regions(parallel, recognize=recognize, signature="stub@1", jobs=4)
+        assert len(created) == 12
+        assert _texts_by_region(parallel) == serial_texts
+        # Unchanged pages skip even across workers (NFR-8).
+        assert ocr_regions(parallel, recognize=recognize, signature="stub@1", jobs=4) == []

@@ -40,6 +40,7 @@ from mfo.core.models import (
     TranslationCandidate,
     TranslationUnit,
 )
+from mfo.core.parallel import parallel_map, resolve_jobs
 from mfo.core.pipeline import (
     InMemoryStateStore,
     Pipeline,
@@ -108,4 +109,7 @@ __all__ = [
     "StageStatus",
     "StateStore",
     "InMemoryStateStore",
+    # parallel
+    "parallel_map",
+    "resolve_jobs",
 ]

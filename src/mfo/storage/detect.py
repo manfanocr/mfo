@@ -10,12 +10,14 @@ idempotent and a forced recompute never leaves stale boxes behind.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
 from mfo.core import OCRSpan, Page, Region
 from mfo.core.enums import RegionStatus, RegionType
 from mfo.core.geometry import BBox
+from mfo.core.parallel import parallel_map
 from mfo.storage.hashing import content_key, sha256_file
 from mfo.storage.project import ProjectStore
 
@@ -41,15 +43,27 @@ class RegionCandidate(Protocol):
 Detect = Callable[[Path], Sequence[RegionCandidate]]
 
 
+@dataclass(frozen=True)
+class _Job:
+    page: Page
+    original: Path
+    page_signature: str
+
+
 def detect_regions(
     store: ProjectStore,
     *,
     detect: Detect,
     signature: str,
     force: bool = False,
+    jobs: int = 1,
 ) -> list[Region]:
-    """Detect regions on every page, persisting them and a per-page signature. Returns new ones."""
-    created: list[Region] = []
+    """Detect regions on every page, persisting them and a per-page signature. Returns new ones.
+
+    Pages are planned and persisted serially (single SQLite connection, deterministic order); only
+    the injected ``detect`` callable runs concurrently across pages when ``jobs > 1`` (NFR-5/6/7).
+    """
+    pending: list[_Job] = []
     for page in store.db.list(Page, order_by="idx"):
         original = store.layout.root / page.image_path
         source_hash = sha256_file(original)
@@ -62,14 +76,19 @@ def detect_regions(
             and store.db.list(Region, where=("page_id", page.id))
         ):
             continue
+        pending.append(_Job(page=page, original=original, page_signature=page_signature))
 
+    candidates_per_page = parallel_map(lambda job: list(detect(job.original)), pending, jobs=jobs)
+
+    created: list[Region] = []
+    for job, candidates in zip(pending, candidates_per_page, strict=True):
+        page = job.page
         # Recompute (forced or stale): drop any prior regions (and their spans, so none are
         # orphaned) before re-detecting.
         for prior in store.db.list(Region, where=("page_id", page.id)):
             store.db.delete(OCRSpan, where=("region_id", prior.id))
         store.db.delete(Region, where=("page_id", page.id))
 
-        candidates = detect(original)
         regions: list[Region] = []
         spans: list[OCRSpan] = []
         for candidate in candidates:
@@ -99,7 +118,7 @@ def detect_regions(
         new_page = page.model_copy(
             update={
                 "detection": {
-                    "signature": page_signature,
+                    "signature": job.page_signature,
                     "detector": signature,
                     "count": len(regions),
                     # Whether this detector also recognized text, so the OCR stage knows it can

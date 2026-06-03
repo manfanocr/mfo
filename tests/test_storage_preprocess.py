@@ -92,3 +92,37 @@ def test_config_change_recomputes(tmp_path: Path) -> None:
             store, transform=_transform(changed), signature=changed.signature()
         )
     assert len(rerun) == 1  # different signature → new derivative
+
+
+def _project_with_pages(root: Path, source: Path, *, count: int) -> ProjectStore:
+    source.mkdir()
+    for i in range(count):
+        Image.new("RGB", (12, 8), "white").save(source / f"p{i}.png")
+    store = ProjectStore.create(root, Project(name="vol", source_lang="ja", target_lang="en"))
+    import_pages(store, discover_images(source).images)
+    return store
+
+
+def test_parallel_matches_serial_and_cache_still_skips(tmp_path: Path) -> None:
+    config = PreprocessConfig(max_dimension=6)
+
+    with _project_with_pages(tmp_path / "s", tmp_path / "ssrc", count=4) as serial:
+        preprocess_pages(serial, transform=_transform(config), signature=config.signature(), jobs=1)
+        serial_keys = sorted(p.preprocessing["cache_key"] for p in serial.db.list(Page))
+        serial_data = sorted(serial.cache.read_bytes(k) for k in serial_keys)
+
+    with _project_with_pages(tmp_path / "p", tmp_path / "psrc", count=4) as parallel:
+        updated = preprocess_pages(
+            parallel, transform=_transform(config), signature=config.signature(), jobs=4
+        )
+        assert len(updated) == 4
+        parallel_data = sorted(
+            parallel.cache.read_bytes(p.preprocessing["cache_key"]) for p in parallel.db.list(Page)
+        )
+        assert parallel_data == serial_data  # derivatives independent of worker count (I-5)
+        assert (
+            preprocess_pages(
+                parallel, transform=_transform(config), signature=config.signature(), jobs=4
+            )
+            == []
+        )

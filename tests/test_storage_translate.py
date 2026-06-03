@@ -309,3 +309,34 @@ def test_glossary_change_invalidates_cache(tmp_path: Path) -> None:
         )
         assert len(first) == 1
         assert len(rerun) == 1  # injecting the glossary changed the context → recomputed
+
+
+def _selected(unit: TranslationUnit) -> str:
+    return next(c.text for c in unit.candidates if c.id == unit.selected_candidate_id)
+
+
+def test_parallel_matches_serial_and_cache_still_skips(tmp_path: Path) -> None:
+    def build(store: ProjectStore) -> None:
+        for p in range(4):
+            page = _page(store, index=p)
+            region = _region(store, page, order=0, text=f"src{p}")
+            _unit(store, page, [region])
+
+    with _store(tmp_path / "serial") as serial:
+        build(serial)
+        translate_units(serial, translate=_echo, signature="fake@1", target_lang="en", jobs=1)
+        serial_texts = {u.source_bundle: _selected(u) for u in serial.db.list(TranslationUnit)}
+
+    with _store(tmp_path / "parallel") as parallel:
+        build(parallel)
+        updated = translate_units(
+            parallel, translate=_echo, signature="fake@1", target_lang="en", jobs=4
+        )
+        assert len(updated) == 4
+        parallel_texts = {u.source_bundle: _selected(u) for u in parallel.db.list(TranslationUnit)}
+        assert parallel_texts == serial_texts
+        # Unchanged pages skip even across workers (NFR-8).
+        assert (
+            translate_units(parallel, translate=_echo, signature="fake@1", target_lang="en", jobs=4)
+            == []
+        )

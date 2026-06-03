@@ -25,6 +25,38 @@ mfo review <proj>            # → open the web editor
 
 ---
 
+## Going faster: parallel pages (`--jobs`)
+
+The heavy per-page stages — **preprocess, detect, OCR, translate, render, composite** — can process
+several pages at once. Pass `--jobs N` (short `-j N`) to any of `detect`, `ocr`, `translate`,
+`render`, `export`, and `run`:
+
+```bash
+mfo run <proj> --jobs 4        # 4 pages in flight at once
+mfo ocr <proj> -j 0            # 0 = auto: one worker per CPU core (capped at 8)
+```
+
+`--jobs` is purely a speed knob: the result is **byte-identical** regardless of the worker count and
+the per-page cache still skips unchanged pages (NFR-8) — it never changes *what* is produced, only
+how fast. It helps most where the work is in native code or network I/O (OCR models, Argos/NLLB,
+PIL, or an `api`/Ollama round-trip), which is exactly where these stages spend their time. Default
+is `1` (serial).
+
+### Benchmarking it
+
+`mfo bench` force-re-runs each configured heavy stage and times it, so you can see the speedup on
+*your* pages and pick a worker count:
+
+```bash
+mfo bench <proj> --jobs 1      # baseline
+mfo bench <proj> --jobs 4      # compare
+mfo bench <proj> --stage ocr -j 8   # just one stage
+```
+
+It uses an in-memory run state, so timing runs don't disturb the project's own pipeline progress.
+
+---
+
 ## Translators (`mfo translate --translator …`)
 
 | Name | Network? | Context-aware? | Configure with |

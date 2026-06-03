@@ -164,3 +164,36 @@ def test_redetecting_regions_invalidates_the_mask(tmp_path: Path) -> None:
         # Move the region (as a re-detection would): the mask must recompute.
         store.db.save(region.model_copy(update={"bbox": BBox(x=5, y=5, width=8, height=8)}))
         assert len(mask_pages(store, mask=_mask, signature=_SIGNATURE)) == 1
+
+
+def _project_with_pages(root: Path, source: Path, *, count: int) -> ProjectStore:
+    source.mkdir()
+    for i in range(count):
+        arr = np.full((40, 40, 3), 255, dtype=np.uint8)
+        arr[15:25, 15:25] = 0
+        Image.fromarray(arr, mode="RGB").save(source / f"p{i}.png")
+    store = ProjectStore.create(root, Project(name="vol", source_lang="ja", target_lang="en"))
+    import_pages(store, discover_images(source).images)
+    for page in store.db.list(Page, order_by="idx"):
+        _add_region(store, page, BBox(x=15, y=15, width=10, height=10))
+    return store
+
+
+def _masked_bytes(store: ProjectStore) -> dict[int, bytes]:
+    out: dict[int, bytes] = {}
+    for page in store.db.list(Page, order_by="idx"):
+        out[page.index] = (store.layout.root / f"renders/{page.id}.masked.png").read_bytes()
+    return out
+
+
+def test_parallel_masking_is_byte_identical_to_serial_and_cache_skips(tmp_path: Path) -> None:
+    with _project_with_pages(tmp_path / "s", tmp_path / "ssrc", count=4) as serial:
+        mask_pages(serial, mask=_mask, signature=_SIGNATURE, jobs=1)
+        serial_bytes = sorted(_masked_bytes(serial).values())
+
+    with _project_with_pages(tmp_path / "p", tmp_path / "psrc", count=4) as parallel:
+        created = mask_pages(parallel, mask=_mask, signature=_SIGNATURE, jobs=4)
+        assert len(created) == 4
+        # Pages are identical images, so the produced masked layers must match byte-for-byte (I-5).
+        assert sorted(_masked_bytes(parallel).values()) == serial_bytes
+        assert mask_pages(parallel, mask=_mask, signature=_SIGNATURE, jobs=4) == []

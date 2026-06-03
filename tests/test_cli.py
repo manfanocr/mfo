@@ -233,6 +233,57 @@ def test_detect_unknown_detector_exits_1(tmp_path: Path) -> None:
     assert result.exit_code == 1
 
 
+def test_detect_jobs_flag_processes_pages_concurrently(tmp_path: Path) -> None:
+    # --jobs is a performance knob: it must produce the same regions as a serial run (NFR-5/8).
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    source = tmp_path / "src"
+    source.mkdir()
+    for i in range(3):
+        _make_page_with_text(source / f"p{i}.png")
+    runner.invoke(app, ["import", str(target), str(source)])
+
+    result = runner.invoke(app, ["detect", str(target), "--jobs", "3"])
+    assert result.exit_code == 0, result.stdout
+    assert "Detected 3 region(s)" in result.stdout
+    with ProjectStore.open(target) as store:
+        assert len(store.db.list(Region)) == 3
+
+
+def test_bench_times_configured_heavy_stages(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    source = tmp_path / "src"
+    source.mkdir()
+    for i in range(2):
+        _make_page_with_text(source / f"p{i}.png")
+    runner.invoke(app, ["import", str(target), str(source)])
+    runner.invoke(app, ["detect", str(target)])
+    runner.invoke(app, ["render", str(target)])
+
+    result = runner.invoke(app, ["bench", str(target), "--jobs", "2"])
+    assert result.exit_code == 0, result.stdout
+    assert "Benchmarking" in result.stdout
+    assert "with --jobs 2" in result.stdout
+    # Heavy stages that are configured (detect + render/mask) are timed; total is reported.
+    assert "detect" in result.stdout
+    assert "render" in result.stdout
+    assert "total" in result.stdout
+
+
+def test_bench_unknown_stage_exits_1(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    source = tmp_path / "src"
+    source.mkdir()
+    _make_page_with_text(source / "p1.png")
+    runner.invoke(app, ["import", str(target), str(source)])
+    runner.invoke(app, ["detect", str(target)])
+
+    result = runner.invoke(app, ["bench", str(target), "--stage", "nope"])
+    assert result.exit_code == 1
+
+
 def test_run_includes_detect_stage(tmp_path: Path) -> None:
     target = tmp_path / "vol"
     runner.invoke(app, ["init", str(target)])

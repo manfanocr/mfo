@@ -141,3 +141,46 @@ def test_redetection_clears_prior_provisional_spans(tmp_path: Path) -> None:
         spans = store.db.list(OCRSpan)
         assert len(spans) == 1  # the stale span from the first pass was cleared, not orphaned
         assert spans[0].text == "second"
+
+
+def _project_with_pages(root: Path, source: Path, *, count: int) -> ProjectStore:
+    source.mkdir()
+    for i in range(count):
+        Image.new("RGB", (20, 30), "white").save(source / f"p{i}.png")
+    store = ProjectStore.create(root, Project(name="vol", source_lang="ja", target_lang="en"))
+    import_pages(store, discover_images(source).images)
+    return store
+
+
+def _by_page(store: ProjectStore) -> dict[int, list[tuple[int, int, int, int]]]:
+    """Region boxes keyed by page index, for comparing parallel vs serial output."""
+    out: dict[int, list[tuple[int, int, int, int]]] = {}
+    for page in store.db.list(Page, order_by="idx"):
+        regions = store.db.list(Region, where=("page_id", page.id))
+        out[page.index] = sorted((r.bbox.x, r.bbox.y, r.bbox.width, r.bbox.height) for r in regions)
+    return out
+
+
+def test_parallel_matches_serial_and_cache_still_skips(tmp_path: Path) -> None:
+    # A detector whose output depends only on its (per-page) input file, so the result is a pure
+    # function of the page — parallel and serial must agree (determinism, I-5).
+    def detect(path: Path) -> list[DetectedRegion]:
+        n = int(path.stem[1:])
+        return [
+            DetectedRegion(
+                bbox=BBox(x=n, y=n, width=5, height=6), type=RegionType.BUBBLE, confidence=0.9
+            )
+        ]
+
+    serial = _project_with_pages(tmp_path / "s", tmp_path / "ssrc", count=5)
+    with serial:
+        detect_regions(serial, detect=detect, signature="stub@1", jobs=1)
+        serial_boxes = _by_page(serial)
+
+    parallel = _project_with_pages(tmp_path / "p", tmp_path / "psrc", count=5)
+    with parallel:
+        created = detect_regions(parallel, detect=detect, signature="stub@1", jobs=4)
+        assert len(created) == 5
+        assert _by_page(parallel) == serial_boxes
+        # Re-running unchanged pages skips them even with multiple workers (NFR-8).
+        assert detect_regions(parallel, detect=detect, signature="stub@1", jobs=4) == []
