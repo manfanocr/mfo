@@ -75,6 +75,8 @@ def test_get_project_lists_pages(client: tuple[TestClient, ProjectStore]) -> Non
     body = response.json()
     assert body["project"]["name"] == "vol"
     assert len(body["pages"]) == 1
+    # The SPA's page list keys off ``page_id`` (not ``id``); locking it here guards the contract.
+    assert "page_id" in body["pages"][0]
 
 
 def test_get_page_serves_regions_and_units(client: tuple[TestClient, ProjectStore]) -> None:
@@ -218,3 +220,11 @@ def test_static_assets_are_served(client: tuple[TestClient, ProjectStore]) -> No
         response = api.get(f"/static/{asset}")
         assert response.status_code == 200, asset
         assert marker in response.text
+        # no-cache so an updated bundle is never masked by a stale browser copy.
+        assert "no-cache" in response.headers.get("cache-control", ""), asset
+
+
+def test_index_is_not_cached(client: tuple[TestClient, ProjectStore]) -> None:
+    api, _ = client
+    response = api.get("/")
+    assert "no-cache" in response.headers.get("cache-control", "")

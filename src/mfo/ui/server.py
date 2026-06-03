@@ -41,12 +41,26 @@ try:
     from fastapi.responses import FileResponse, JSONResponse
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel
+    from starlette.types import Scope
 except ModuleNotFoundError as exc:  # pragma: no cover - exercised only without the extra
     raise ModuleNotFoundError(
         "The review editor needs FastAPI. Install it with:  pip install 'mfo[review]'"
     ) from exc
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+# The bundled SPA changes between releases; ``no-cache`` makes the browser revalidate every load
+# (cheap 304s via ETag) so an updated app.js/css is never masked by a stale cached copy.
+_NO_CACHE = "no-cache"
+
+
+class _NoCacheStaticFiles(StaticFiles):
+    """Serve the SPA assets but force revalidation so updated bundles are always picked up."""
+
+    async def get_response(self, path: str, scope: Scope) -> Any:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = _NO_CACHE
+        return response
 
 
 class TranslationEdit(BaseModel):
@@ -178,10 +192,10 @@ def create_app(store: ProjectStore) -> FastAPI:
 
     @app.get("/")
     def index() -> FileResponse:
-        return FileResponse(STATIC_DIR / "index.html")
+        return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": _NO_CACHE})
 
     # The SPA's assets (CSS/JS); mounted last so it never shadows the API routes above.
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.mount("/static", _NoCacheStaticFiles(directory=STATIC_DIR), name="static")
 
     return app
 
