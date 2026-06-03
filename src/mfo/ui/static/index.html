@@ -22,7 +22,9 @@
       </button>
       <button id="queue-btn" title="Review low-confidence first (n / p to step)">Queue</button>
       <button id="history-btn" title="Undo/redo history (Ctrl+Z / Ctrl+Y)">History</button>
-      <button id="render-toggle" title="Preview the re-rendered page (r)">Preview</button>
+      <button id="render-btn" title="Render this page and review the result">Render</button>
+      <button id="render-toggle" title="Show/hide the rendered preview (r)">Preview</button>
+      <button id="center-toggle" title="Recenter the canvas when a region is clicked">⌖</button>
       <button id="theme-toggle" title="Toggle dark mode (d)">◐</button>
     </header>
 
@@ -32,7 +34,10 @@
         <h2>Pages</h2>
         <ul id="page-list"></ul>
         <div id="queue-panel" hidden>
-          <h2>Review queue · low-confidence first</h2>
+          <div class="panel-head">
+            <h2>Review queue</h2>
+            <button id="queue-filter" title="Show only needs-review regions">Needs review</button>
+          </div>
           <div id="queue-list"></div>
         </div>
         <div id="history-panel" hidden>

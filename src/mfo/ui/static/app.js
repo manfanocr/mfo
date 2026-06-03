@@ -26,6 +26,9 @@ const state = {
   preview: false, // showing the re-rendered page over the source
   createMode: false, // drawing a new region instead of panning
   historyScope: "global", // "global" | "page" — what undo/redo and the history panel act on
+  projectId: null, // for namespacing the remembered last page
+  queueFilter: false, // queue shows only needs-review entries when true
+  centerOnClick: false, // recenter the canvas when a region is clicked (arrows always center)
   zoom: 1,
   pan: { x: 0, y: 0 },
 };
@@ -91,6 +94,7 @@ function selectedRegion() {
 async function loadProject() {
   const data = await getJSON("/api/project");
   const p = data.project;
+  state.projectId = p.id;
   document.title = `${p.name} — mfo review`;
   $("#project-meta").textContent = `${p.name} · ${p.source_lang} → ${p.target_lang} · ${p.reading_direction}`;
   state.pages = data.pages;
@@ -98,7 +102,32 @@ async function loadProject() {
 
   const lowTotal = data.pages.reduce((n, pg) => n + pg.low_confidence, 0);
   status(`${data.pages.length} page(s), ${lowTotal} low-confidence region(s).`);
-  if (data.pages.length) selectPage(data.pages[0].page_id);
+  if (data.pages.length) {
+    // Reopen on the page the user last viewed (per project), falling back to the first.
+    const lastId = readLastPage();
+    const pick = data.pages.find((pg) => pg.page_id === lastId) || data.pages[0];
+    selectPage(pick.page_id);
+  }
+}
+
+function lastPageKey() {
+  return `mfo:last-page:${state.projectId}`;
+}
+
+function readLastPage() {
+  try {
+    return localStorage.getItem(lastPageKey());
+  } catch {
+    return null;
+  }
+}
+
+function rememberLastPage(pageId) {
+  try {
+    localStorage.setItem(lastPageKey(), pageId);
+  } catch {
+    /* storage may be unavailable; the last page just won't be remembered */
+  }
 }
 
 // Re-fetch the project index and redraw the page list so per-page counts (regions/units/
@@ -144,6 +173,7 @@ function applyPageView(view, keepSelectionId = null) {
   const priorId = keepSelectionId ?? (selectedRegion() && selectedRegion().region_id);
   const samePage = state.page && state.page.page_id === view.page_id;
   state.page = view;
+  if (!samePage) rememberLastPage(view.page_id);
   state.regions = view.regions; // already reading-order sorted by the API
 
   state.unitByRegion = new Map();
@@ -210,11 +240,13 @@ function drawRegions() {
   });
 }
 
-function selectRegion(i) {
+// `center` recenters the canvas on the region. Arrow/queue navigation always centers (it's how the
+// user sees where they jumped); a plain mouse click only centers when the user opts in (item 12).
+function selectRegion(i, { center = false } = {}) {
   state.selected = i;
   drawRegions();
   renderInspector();
-  scrollSelectedIntoView();
+  if (center) scrollSelectedIntoView();
 }
 
 // -- side panel (§13.2) -------------------------------------------------------------------
@@ -465,6 +497,7 @@ async function splitRegion(orientation) {
     });
     applyPageView(view, region.region_id);
     invalidatePreview();
+    refreshProject();
     status("Region split.");
   } catch (err) {
     status(`Split failed: ${err.message}`);
@@ -489,6 +522,7 @@ async function mergeMarked() {
     state.marked.clear();
     applyPageView(view, ids[0]);
     invalidatePreview();
+    refreshProject();
     status(`Merged ${ids.length} regions.`);
   } catch (err) {
     status(`Merge failed: ${err.message}`);
@@ -524,6 +558,7 @@ async function deleteRegion() {
     state.selected = null;
     applyPageView(view);
     invalidatePreview();
+    refreshProject();
     status("Region deleted.");
   } catch (err) {
     status(`Delete failed: ${err.message}`);
@@ -588,6 +623,7 @@ async function createRegion(bbox) {
     const view = await sendJSON("POST", `/api/pages/${state.page.page_id}/regions`, bbox);
     applyPageView(view);
     invalidatePreview();
+    refreshProject();
     status("Region created (OCR + translated).");
   } catch (err) {
     status(`Create failed: ${err.message}`);
@@ -671,11 +707,25 @@ async function loadQueue() {
   renderQueue();
 }
 
+// The "needs review" filter narrows the queue to entries flagged needs_review (item 7).
+function filteredQueue() {
+  return state.queueFilter
+    ? state.queue.filter((e) => e.status === "needs_review")
+    : state.queue;
+}
+
 function renderQueue() {
   const list = $("#queue-list");
   list.replaceChildren();
+  $("#queue-filter").classList.toggle("active", state.queueFilter);
   const cur = selectedRegion();
-  state.queue.forEach((entry, i) => {
+  const entries = filteredQueue();
+  if (!entries.length) {
+    const msg = state.queueFilter ? "No needs-review regions." : "Queue is empty.";
+    list.append(el("p", { class: "muted", text: msg }));
+    return;
+  }
+  entries.forEach((entry, i) => {
     const row = el("div", { class: `queue-row${entry.low_confidence ? " low" : ""}`, "data-i": String(i) }, [
       el("span", { class: "dot" }),
       el("span", { class: "page-idx", text: `p${entry.page_index + 1}` }),
@@ -689,31 +739,53 @@ function renderQueue() {
 }
 
 async function gotoQueueEntry(i) {
-  const entry = state.queue[i];
+  const entry = filteredQueue()[i];
   if (!entry) return;
   if (!state.page || state.page.page_id !== entry.page_id) {
     await selectPage(entry.page_id, entry.region_id);
   } else {
     const idx = state.regions.findIndex((r) => r.region_id === entry.region_id);
-    if (idx >= 0) selectRegion(idx);
+    if (idx >= 0) selectRegion(idx, { center: true });
   }
   renderQueue();
 }
 
 function stepQueue(delta) {
-  if (!state.queue.length) return;
+  const entries = filteredQueue();
+  if (!entries.length) return;
   const cur = selectedRegion();
-  const at = cur ? state.queue.findIndex((e) => e.region_id === cur.region_id) : -1;
-  const next = at < 0 ? (delta > 0 ? 0 : state.queue.length - 1) : (at + delta + state.queue.length) % state.queue.length;
+  const at = cur ? entries.findIndex((e) => e.region_id === cur.region_id) : -1;
+  const next = at < 0 ? (delta > 0 ? 0 : entries.length - 1) : (at + delta + entries.length) % entries.length;
   gotoQueueEntry(next);
+}
+
+function toggleQueueFilter() {
+  state.queueFilter = !state.queueFilter;
+  renderQueue();
+}
+
+function queueOpen() {
+  return !$("#queue-panel").hidden;
+}
+
+// When an overlay panel (queue or history) is up, stop the page list behind it from scrolling too,
+// so the two scrollbars don't fight (item 9).
+function syncPanelOverlay() {
+  const open = !$("#queue-panel").hidden || !$("#history-panel").hidden;
+  $("#pages-panel").classList.toggle("panel-open", open);
 }
 
 async function toggleQueue() {
   const panel = $("#queue-panel");
   const showing = panel.hidden;
-  if (showing) await loadQueue();
+  if (showing) {
+    $("#history-panel").hidden = true; // the two overlays are mutually exclusive
+    $("#history-btn").classList.remove("active");
+    await loadQueue();
+  }
   panel.hidden = !showing;
   $("#queue-btn").classList.toggle("active", showing);
+  syncPanelOverlay();
 }
 
 // -- undo / redo history (§13; FR-42) -----------------------------------------------------
@@ -774,9 +846,14 @@ function renderHistory(data) {
 async function toggleHistory() {
   const panel = $("#history-panel");
   const showing = panel.hidden;
-  if (showing) await loadHistory();
+  if (showing) {
+    $("#queue-panel").hidden = true; // the two overlays are mutually exclusive
+    $("#queue-btn").classList.remove("active");
+    await loadHistory();
+  }
   panel.hidden = !showing;
   $("#history-btn").classList.toggle("active", showing);
+  syncPanelOverlay();
 }
 
 function toggleHistoryScope() {
@@ -835,7 +912,7 @@ function onRegionMouseDown(e, i) {
     return;
   }
   if (i !== state.selected) {
-    selectRegion(i);
+    selectRegion(i, { center: state.centerOnClick });
     return;
   }
   // Drag the already-selected box to move it (FR-38).
@@ -933,7 +1010,7 @@ function stepRegion(delta) {
         ? 0
         : state.regions.length - 1
       : (state.selected + delta + state.regions.length) % state.regions.length;
-  selectRegion(next);
+  selectRegion(next, { center: true });
 }
 
 function stepPage(delta) {
@@ -958,6 +1035,17 @@ function toggleTheme() {
     localStorage.setItem("mfo-theme", root.dataset.theme);
   } catch {
     /* storage may be unavailable; theme just won't persist */
+  }
+}
+
+// When on, a mouse click on a region also recenters the canvas on it; arrows/queue always do.
+function toggleCenterOnClick() {
+  state.centerOnClick = !state.centerOnClick;
+  $("#center-toggle").classList.toggle("active", state.centerOnClick);
+  try {
+    localStorage.setItem("mfo-center-click", state.centerOnClick ? "1" : "");
+  } catch {
+    /* storage may be unavailable; the preference just won't persist */
   }
 }
 
@@ -1032,11 +1120,17 @@ function wireKeyboard() {
         if (state.createMode) toggleCreateMode(false);
         break;
       case "ArrowDown":
+        e.preventDefault();
+        queueOpen() ? stepQueue(1) : stepRegion(1);
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        queueOpen() ? stepQueue(-1) : stepRegion(-1);
+        break;
       case "j":
         e.preventDefault();
         stepRegion(1);
         break;
-      case "ArrowUp":
       case "k":
         e.preventDefault();
         stepRegion(-1);
@@ -1087,17 +1181,22 @@ function init() {
   try {
     const saved = localStorage.getItem("mfo-theme");
     if (saved) document.documentElement.dataset.theme = saved;
+    state.centerOnClick = localStorage.getItem("mfo-center-click") === "1";
   } catch {
     /* ignore */
   }
+  $("#center-toggle").classList.toggle("active", state.centerOnClick);
 
   $("#zoom-in").addEventListener("click", () => setZoom(state.zoom * 1.2));
   $("#zoom-out").addEventListener("click", () => setZoom(state.zoom / 1.2));
   $("#zoom-fit").addEventListener("click", fitPage);
   $("#theme-toggle").addEventListener("click", toggleTheme);
+  $("#center-toggle").addEventListener("click", toggleCenterOnClick);
   $("#render-toggle").addEventListener("click", togglePreview);
+  $("#render-btn").addEventListener("click", showPreview);
   $("#create-btn").addEventListener("click", () => toggleCreateMode());
   $("#queue-btn").addEventListener("click", toggleQueue);
+  $("#queue-filter").addEventListener("click", toggleQueueFilter);
   $("#history-btn").addEventListener("click", toggleHistory);
   $("#history-scope").addEventListener("click", toggleHistoryScope);
   $("#undo-btn").addEventListener("click", undo);

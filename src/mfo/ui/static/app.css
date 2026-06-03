@@ -131,6 +131,11 @@ button:hover {
   position: relative;
 }
 
+/* While an overlay panel (queue/history) is up, don't also scroll the page list behind it. */
+#pages-panel.panel-open {
+  overflow: hidden;
+}
+
 #inspector {
   border-left: 1px solid var(--border);
 }
@@ -375,7 +380,9 @@ h2 {
 }
 
 #render-toggle.active,
-#queue-btn.active {
+#queue-btn.active,
+#queue-filter.active,
+#center-toggle.active {
   background: var(--accent);
   color: var(--accent-fg);
   border-color: var(--accent);
@@ -628,7 +635,7 @@ h2 {
   z-index: 1;
 }
 
-#history-panel .panel-head {
+.panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
