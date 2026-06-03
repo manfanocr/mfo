@@ -10,6 +10,20 @@ from mfo.render.mask import (
     mask_image,
     restore,
 )
+from mfo.render.typeset import (
+    DEFAULT_PRESET,
+    PRESETS,
+    FontLoader,
+    StylePreset,
+    TextLayout,
+    fit_text,
+    get_preset,
+    load_font,
+    preset_names,
+    render_layout,
+    typeset,
+    wrap_text,
+)
 
 __all__ = [
     # masking
@@ -19,4 +33,17 @@ __all__ = [
     "mask_image",
     "estimate_background",
     "restore",
+    # typesetting
+    "StylePreset",
+    "TextLayout",
+    "FontLoader",
+    "PRESETS",
+    "DEFAULT_PRESET",
+    "preset_names",
+    "get_preset",
+    "load_font",
+    "wrap_text",
+    "fit_text",
+    "render_layout",
+    "typeset",
 ]

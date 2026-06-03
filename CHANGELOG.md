@@ -9,6 +9,28 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 5.2 — Font fitting & placement** (M5 Rendering & Export):
+  - `mfo.render.typeset`: a pure, storage-free typesetting engine. `fit_text` finds the largest font size at
+    which a translated string — greedily wrapped to the box width (`wrap_text`, hard-breaking any word too wide
+    to fit) — still fits the padded bounding box, shrinking from the preset's ceiling to its floor (FR-34); the
+    fit is readability-first and best-effort, so when even the smallest size overflows it emits that size and
+    flags `overflow` rather than failing, keeping a too-small bubble graceful and the uncertainty visible
+    (NFR-3, I-4). `render_layout` paints the fitted `TextLayout` onto a transparent RGBA tile the size of the
+    box — vertically centred, horizontally aligned per the preset, stroke drawn under the fill — ready for the
+    compositing batch to paste onto a masked page; `typeset` is the fit + render convenience.
+  - Style presets (FR-35): named `StylePreset`s (`default`, `shout`, `whisper`, `caption`) bundle font, size
+    range, line spacing, alignment, padding, fill, and stroke/outline, looked up via `get_preset`/`preset_names`.
+    Font loading goes through an injectable `FontLoader` adapter (NFR-17); the default `load_font` is the offline
+    provider (Pillow's built-in TrueType-backed default, or any named `font_path`), so the core path needs no
+    font download (I-7/I-8). The fit search and rendering are pure functions of their inputs, so the same
+    text + box + preset yield byte-identical output (NFR-26).
+  - This batch is the pure layout/rendering engine; wiring it into the render stage to typeset selected
+    translations onto the masked layer and export pages lands in batch 5.3.
+  - Tests: large size chosen in a roomy box, wrapping to width with no horizontal/vertical overflow, overflow
+    flagged in a tiny box, overlong-word hard-break, box-sized tile with visible in-bounds text, default
+    outline paints stroke pixels while `whisper` paints none, alignment shifts text horizontally, fit + render
+    determinism, preset registry consistency, font-loader caching.
+  - Satisfies: FR-34, FR-35, NFR-3; NFR-26; SG-6 groundwork; spec §10.8.
 - **Batch 5.1 — Text masking / removal** (M5 Rendering & Export):
   - `mfo.render.mask`: a pure, storage-free imaging module that removes source text from a page. Given the
     page and its detected region boxes it produces a **masked** layer — each box filled with its estimated
@@ -371,10 +393,11 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   is off the MVP-critical path. M4 landed 4.1 (translation adapter + context builder), 4.2 (glossary,
   terminology & style), and 4.3 (traceability & mapping export, MVP-7) — completing M4's MVP scope. The
   optional **batch 4.4 — API translation adapter** (opt-in cloud/LLM translation behind explicit config,
-  never default) remains and is off the MVP-critical path. **M5 (Rendering & Export)** has started with
-  5.1 (text masking / removal): the reversible masked base layer is in place. Next up: **batch 5.2 — font
-  fitting & placement** (wrap/scale/align translated text within each bbox, font selection, stroke/outline,
-  style presets), then 5.3 (typeset onto the masked layer + page export).
+  never default) remains and is off the MVP-critical path. **M5 (Rendering & Export)** has landed 5.1 (text
+  masking / removal — the reversible masked base layer) and 5.2 (font fitting & placement — the pure
+  typesetting engine: bubble-aware fit/wrap/align with style presets and stroke/outline). Next up: **batch
+  5.3 — composite & export pages** (typeset the selected translation onto each masked layer and export the
+  translated pages + mapping; also where bare `mfo export` graduates from its placeholder).
 
 <!--
 Template for a landed batch:

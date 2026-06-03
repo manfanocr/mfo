@@ -227,7 +227,7 @@ plugs into.
 - **Satisfies:** FR-31, FR-32, FR-33, I-1, I-6; §10.8.
 - **DoD:** Masked layer produced; original recoverable; line-art preservation sanity test.
 
-### Batch 5.2 — Font fitting & placement
+### Batch 5.2 — Font fitting & placement ✅ *(landed — see CHANGELOG)*
 - **Scope:** Text wrap/scale/align within bbox, font selection, stroke/outline, style presets,
   bubble-aware fitting.
 - **Satisfies:** FR-34, FR-35, NFR-3; SG-6 groundwork; §10.8.
