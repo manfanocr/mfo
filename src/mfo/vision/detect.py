@@ -12,6 +12,10 @@ turns these into persisted ``Region`` records linked to their page.
 
 from __future__ import annotations
 
+import logging
+import os
+import urllib.request
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -25,6 +29,8 @@ from mfo.core.enums import RegionType
 from mfo.core.geometry import BBox
 
 Uint8Array = NDArray[np.uint8]
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -133,7 +139,293 @@ def baseline_detector() -> RegionDetector:
     return ConnectedComponentsDetector()
 
 
-_FACTORIES = {"baseline": baseline_detector}
+# --- ML detector adapter (batch 2.2; FR-11, FR-14; NFR-22) -------------------------------------
+#
+# A trained bubble/text detector (e.g. comic-text-detector / YOLO) gives better boxes and a real
+# region-type classification than the heuristic baseline. It is **optional**: the heavyweight
+# runtime (onnxruntime) and the model weights load lazily on first use, so importing this module
+# never pulls them in and the offline core keeps working without them (I-7/I-8, NFR-21). When the
+# dependency or model is absent, :class:`FallbackDetector` transparently uses the baseline so the
+# pipeline never hard-fails (DoD 2.2).
+
+
+class DetectorDependencyError(RuntimeError):
+    """Raised when an ML detector's optional dependency or model is unavailable (I-7)."""
+
+
+# Model class index → region type. Trained detectors emit a class id per box; this maps the common
+# comic-text-detector / YOLO label order onto our taxonomy (FR-11, FR-14). Out-of-range ids fall
+# back to UNKNOWN so a relabelled model never crashes the pipeline.
+DEFAULT_CLASS_LABELS: tuple[RegionType, ...] = (
+    RegionType.BUBBLE,
+    RegionType.NARRATION,
+    RegionType.SFX,
+    RegionType.CAPTION,
+)
+
+
+def classify_region(
+    class_index: int, labels: Sequence[RegionType] = DEFAULT_CLASS_LABELS
+) -> RegionType:
+    """Map a model class index to a :class:`RegionType`, defaulting to UNKNOWN if out of range."""
+    if 0 <= class_index < len(labels):
+        return labels[class_index]
+    return RegionType.UNKNOWN
+
+
+class DetectionModel(Protocol):
+    """A loaded detection model: turns a page into candidate boxes in source-pixel space.
+
+    This is the swap point for the actual inference runtime (ONNX/torch). Keeping it separate from
+    :class:`MLDetector` lets the adapter's threshold/NMS/ordering logic be tested with a fake model
+    and no heavyweight dependency.
+    """
+
+    def infer(self, image: Uint8Array) -> list[DetectedRegion]: ...
+
+
+def _iou(a: BBox, b: BBox) -> float:
+    """Intersection-over-union of two boxes (0 when disjoint)."""
+    inter_w = max(0.0, min(a.right, b.right) - max(a.x, b.x))
+    inter_h = max(0.0, min(a.bottom, b.bottom) - max(a.y, b.y))
+    inter = inter_w * inter_h
+    if inter == 0.0:
+        return 0.0
+    union = a.area + b.area - inter
+    return inter / union if union > 0 else 0.0
+
+
+def non_max_suppression(
+    regions: Sequence[DetectedRegion], iou_threshold: float
+) -> list[DetectedRegion]:
+    """Greedy NMS: keep the highest-confidence box, drop those overlapping it beyond the IoU cap."""
+    kept: list[DetectedRegion] = []
+    for region in sorted(regions, key=lambda r: r.confidence, reverse=True):
+        if all(_iou(region.bbox, k.bbox) <= iou_threshold for k in kept):
+            kept.append(region)
+    return kept
+
+
+def default_model_dir() -> Path:
+    """Where ML model weights are cached (overridable via the ``MFO_MODEL_DIR`` env var)."""
+    override = os.environ.get("MFO_MODEL_DIR")
+    return Path(override) if override else Path.home() / ".cache" / "mfo" / "models"
+
+
+@dataclass(frozen=True)
+class MLDetectorConfig:
+    """Configuration for the ML detector adapter.
+
+    ``model_url`` is empty by default so nothing is downloaded implicitly: point it at an ONNX
+    export (or drop the file into ``model_dir``) to enable the detector. GPU is opt-in by prepending
+    a provider, e.g. ``providers=("CUDAExecutionProvider", "CPUExecutionProvider")``.
+    """
+
+    model_url: str = ""
+    model_filename: str = "comic-text-detector.onnx"
+    model_dir: Path | None = None  # None → default_model_dir()
+    input_size: int = 1024
+    score_threshold: float = 0.3
+    nms_iou: float = 0.45
+    providers: tuple[str, ...] = ("CPUExecutionProvider",)
+    class_labels: tuple[RegionType, ...] = DEFAULT_CLASS_LABELS
+
+    def resolved_model_dir(self) -> Path:
+        return self.model_dir or default_model_dir()
+
+
+def _letterbox(image: Uint8Array, size: int) -> tuple[Uint8Array, float, float, float]:
+    """Resize ``image`` to fit a ``size``×``size`` square keeping aspect; return scale and padding.
+
+    Returns ``(padded, scale, pad_x, pad_y)`` where a model-space coordinate maps back to source
+    pixels via ``(coord - pad) / scale``.
+    """
+    height, width = image.shape[:2]
+    scale = size / max(height, width) if max(height, width) > 0 else 1.0
+    new_w, new_h = max(1, round(width * scale)), max(1, round(height * scale))
+    resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    pad_x, pad_y = (size - new_w) / 2.0, (size - new_h) / 2.0
+    channels = 1 if image.ndim == 2 else image.shape[2]
+    canvas = np.zeros((size, size, channels), dtype=np.uint8)
+    top, left = int(pad_y), int(pad_x)
+    canvas[top : top + new_h, left : left + new_w] = resized.reshape(new_h, new_w, channels)
+    return canvas, scale, pad_x, pad_y
+
+
+def decode_detections(
+    rows: NDArray[np.float32],
+    *,
+    scale: float,
+    pad_x: float,
+    pad_y: float,
+    labels: Sequence[RegionType] = DEFAULT_CLASS_LABELS,
+) -> list[DetectedRegion]:
+    """Decode raw ``[N, 6]`` detections ``(x1, y1, x2, y2, score, class)`` to source-space boxes.
+
+    Coordinates are in letterboxed model space and are un-padded/un-scaled back to source pixels.
+    Pure (no model/runtime) so it carries real test coverage.
+    """
+    detections: list[DetectedRegion] = []
+    for row in rows:
+        x1, y1, x2, y2, score, cls = (float(v) for v in row[:6])
+        left = (min(x1, x2) - pad_x) / scale
+        top = (min(y1, y2) - pad_y) / scale
+        width = abs(x2 - x1) / scale
+        height = abs(y2 - y1) / scale
+        detections.append(
+            DetectedRegion(
+                bbox=BBox(x=left, y=top, width=max(0.0, width), height=max(0.0, height)),
+                type=classify_region(int(round(cls)), labels),
+                confidence=round(min(1.0, max(0.0, score)), 3),
+            )
+        )
+    return detections
+
+
+def _clamp_bbox(bbox: BBox, width: int, height: int) -> BBox | None:
+    """Clamp a box to the page; return None if it collapses below 1px (degenerate)."""
+    left = min(max(0.0, bbox.x), float(width))
+    top = min(max(0.0, bbox.y), float(height))
+    right = min(max(0.0, bbox.right), float(width))
+    bottom = min(max(0.0, bbox.bottom), float(height))
+    if right - left < 1.0 or bottom - top < 1.0:
+        return None
+    return BBox(x=left, y=top, width=right - left, height=bottom - top)
+
+
+class OnnxDetectionModel:
+    """ONNX-runtime detection model: imports onnxruntime lazily and fetches weights on demand.
+
+    Raises :class:`DetectorDependencyError` (caught by :class:`FallbackDetector`) when onnxruntime
+    is not installed or the model file is neither present nor downloadable.
+    """
+
+    def __init__(self, config: MLDetectorConfig) -> None:
+        self._config = config
+        self._session: object | None = None
+
+    def _model_path(self) -> Path:
+        return self._config.resolved_model_dir() / self._config.model_filename
+
+    def ensure_model_file(self) -> Path:
+        """Resolve the model file, downloading it from ``model_url`` (atomically) if absent."""
+        path = self._model_path()
+        if path.exists():
+            return path
+        if not self._config.model_url:
+            raise DetectorDependencyError(
+                f"detector model not found at {path}; set MLDetectorConfig.model_url to "
+                "download it or place the .onnx file there"
+            )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".part")
+        try:
+            urllib.request.urlretrieve(self._config.model_url, tmp)  # noqa: S310 (user-configured)
+        except OSError as exc:
+            tmp.unlink(missing_ok=True)
+            raise DetectorDependencyError(
+                f"failed to download detector model from {self._config.model_url}: {exc}"
+            ) from exc
+        tmp.replace(path)  # atomic publish (NFR-26/27)
+        return path
+
+    def _ensure_session(self) -> object:
+        if self._session is None:
+            try:
+                import onnxruntime as ort
+            except ImportError as exc:  # optional dependency not installed
+                raise DetectorDependencyError(
+                    "onnxruntime is not installed; install it with:  pip install 'mfo[detect]'"
+                ) from exc
+            path = self.ensure_model_file()
+            self._session = ort.InferenceSession(str(path), providers=list(self._config.providers))
+        return self._session
+
+    def infer(self, image: Uint8Array) -> list[DetectedRegion]:
+        session = self._ensure_session()
+        padded, scale, pad_x, pad_y = _letterbox(image, self._config.input_size)
+        # NCHW float tensor in [0, 1]; the common export expects RGB.
+        tensor = padded.astype(np.float32).transpose(2, 0, 1)[np.newaxis] / 255.0
+        input_name = session.get_inputs()[0].name  # type: ignore[attr-defined]
+        outputs = session.run(None, {input_name: tensor})  # type: ignore[attr-defined]
+        rows = np.asarray(outputs[0], dtype=np.float32).reshape(-1, 6)
+        return decode_detections(
+            rows, scale=scale, pad_x=pad_x, pad_y=pad_y, labels=self._config.class_labels
+        )
+
+
+class MLDetector:
+    """Trained detector adapter: runs a :class:`DetectionModel`, then thresholds + NMS + orders."""
+
+    name = "ml-detector"
+    version = "1"
+
+    def __init__(
+        self, config: MLDetectorConfig | None = None, model: DetectionModel | None = None
+    ) -> None:
+        self._config = config or MLDetectorConfig()
+        self._model = model  # injectable; the ONNX model is built lazily on first use
+
+    def _get_model(self) -> DetectionModel:
+        if self._model is None:
+            self._model = OnnxDetectionModel(self._config)
+        return self._model
+
+    def detect(self, image: Uint8Array) -> list[DetectedRegion]:
+        height, width = image.shape[:2]
+        candidates = [
+            region
+            for region in self._get_model().infer(image)
+            if region.confidence >= self._config.score_threshold
+        ]
+        kept = non_max_suppression(candidates, self._config.nms_iou)
+        regions: list[DetectedRegion] = []
+        for region in kept:
+            bbox = _clamp_bbox(region.bbox, width, height)
+            if bbox is not None:
+                regions.append(
+                    DetectedRegion(bbox=bbox, type=region.type, confidence=region.confidence)
+                )
+        regions.sort(key=lambda r: (r.bbox.y, r.bbox.x))
+        return regions
+
+
+class FallbackDetector:
+    """Tries ``primary``; if its model/dependency is unavailable, uses ``fallback`` (DoD 2.2).
+
+    Resolution happens once, lazily, on the first :meth:`detect`, then is pinned. The reported
+    ``name``/``version`` is a stable composite so the detection cache signature (NFR-8) is
+    deterministic regardless of which backend ends up running.
+    """
+
+    def __init__(self, primary: RegionDetector, fallback: RegionDetector) -> None:
+        self.primary = primary
+        self.fallback = fallback
+        self.name = f"{primary.name}+fallback"
+        self.version = f"{primary.version}+{fallback.version}"
+        self._resolved: RegionDetector | None = None
+
+    def detect(self, image: Uint8Array) -> list[DetectedRegion]:
+        if self._resolved is not None:
+            return self._resolved.detect(image)
+        try:
+            regions = self.primary.detect(image)
+        except DetectorDependencyError as exc:
+            _log.warning(
+                "ML detector unavailable (%s); falling back to %s", exc, self.fallback.name
+            )
+            self._resolved = self.fallback
+            return self.fallback.detect(image)
+        self._resolved = self.primary
+        return regions
+
+
+def ml_detector(config: MLDetectorConfig | None = None) -> RegionDetector:
+    """The ML detector with a transparent baseline fallback (the ``"ml"`` config name)."""
+    return FallbackDetector(MLDetector(config), ConnectedComponentsDetector())
+
+
+_FACTORIES = {"baseline": baseline_detector, "ml": ml_detector}
 
 
 def get_detector(name: str = "baseline") -> RegionDetector:

@@ -9,6 +9,28 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 2.2 — ML detector adapter** (M2 Vision — optional, post-MVP):
+  - `mfo.vision.detect`: a trained bubble/text detector behind the existing `RegionDetector` interface,
+    fully optional so the offline core is untouched (I-7/I-8, NFR-21/22). `OnnxDetectionModel` imports
+    `onnxruntime` lazily and fetches the model weights on first use — resolving them from `model_dir`
+    (env-overridable `MFO_MODEL_DIR`) or downloading atomically from a configured `model_url` — and runs
+    on CPU by default with GPU opt-in via `providers`. The model is decoupled behind a `DetectionModel`
+    protocol so the adapter's logic carries real test coverage without the heavyweight runtime: letterbox
+    pre-processing, `decode_detections` (un-pad/un-scale model boxes to source pixels), `classify_region`
+    (model class index → BUBBLE/NARRATION/SFX/CAPTION, UNKNOWN out of range — FR-11, FR-14), confidence
+    thresholding, greedy IoU `non_max_suppression`, page clamping, and reading-order sort.
+  - `FallbackDetector` wraps the ML detector with the connected-components baseline: it resolves its
+    backend once, lazily, on first detect, and on a missing dependency/model (`DetectorDependencyError`)
+    transparently falls back to the baseline rather than hard-failing (DoD 2.2). Its `name`/`version` is a
+    stable composite (`ml-detector+fallback@1+1`) so the detection cache signature stays deterministic
+    regardless of which backend runs (NFR-8). Registered as the `"ml"` detector, selectable via
+    `mfo detect --detector ml` (and `mfo run`), and shipped as the `detect` extra (`pip install 'mfo[detect]'`).
+  - Tests: class→type mapping incl. out-of-range; NMS overlap suppression; letterbox-aware decode geometry;
+    adapter threshold/NMS/clamp/order with a fake model; fallback uses the primary when available and drops
+    to the baseline when the model is missing; `get_detector("ml")` resolution; model-dir env override;
+    `ensure_model_file` errors without a URL and downloads atomically (temp cleaned) with one; and a clear
+    missing-dependency error when `onnxruntime` is absent.
+  - Satisfies: FR-11, FR-14 (best-effort); NFR-17, NFR-21, NFR-22; SG-5 groundwork.
 - **Batch 6.3 — In-place editing & region ops** (M6 Review Editor — completes M6 / the MVP):
   - `mfo.ui.review`: the framework-free service grew the editing operations of §13.3/13.4 as pure functions
     over a `ProjectStore`, each persisting directly and returning the refreshed page view: `set_region_status`
@@ -511,8 +533,9 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   manual reading-order, a low-confidence-first review queue, and a re-rendered page preview). **With M0–M6
   complete, the MVP Definition of Done (§21) is satisfied** — a user can import a folder of pages, detect &
   OCR, get context-aware translations, review/edit in place, export, and reopen later with all mappings
-  intact. Off-critical-path batches remain optional: 4.4 (API translation adapter), 3.3 (panel detection),
-  2.2 (ML detector adapter).
+  intact. The optional ML detector (batch 2.2 — a lazy, fallback-guarded ONNX detector behind the `detect`
+  extra) has since landed off the critical path; remaining optional batches: 4.4 (API translation adapter)
+  and 3.3 (panel detection).
 
 <!--
 Template for a landed batch:

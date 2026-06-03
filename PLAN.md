@@ -148,7 +148,7 @@ plugs into.
 - **Satisfies:** FR-10, FR-11, NFR-17/21; MVP-3; §10.3.
 - **DoD:** Detects regions on sample pages; confidence stored; adapter swappable via config.
 
-### Batch 2.2 — ML detector adapter (optional)
+### Batch 2.2 — ML detector adapter (optional) ✅ *(landed — see CHANGELOG)*
 - **Scope:** Adapter for a trained bubble/text detector (e.g. comic-text-detector / YOLO),
   lazy model download, CPU + optional GPU, region-type classification (bubble/narration/SFX/caption).
 - **Satisfies:** FR-11, FR-14 (best-effort), NFR-22; SG-5 groundwork.
@@ -302,7 +302,7 @@ plugs into.
 
 - [x] M0 Foundation
 - [x] M1 Import & Preprocess
-- [x] M2 Vision *(MVP scope: 2.1 detect, 2.3 OCR, 2.4 confidence; 2.2 ML detector is optional)*
+- [x] M2 Vision *(MVP scope: 2.1 detect, 2.3 OCR, 2.4 confidence; 2.2 optional ML detector landed)*
 - [x] M3 Structure *(MVP scope: 3.1 reading order, 3.2 dialogue grouping; 3.3 panel detection is optional)*
 - [x] M4 Translation *(MVP scope: 4.1 adapter+context, 4.2 glossary/style, 4.3 mapping; 4.4 API adapter is optional)*
 - [x] M5 Render & Export

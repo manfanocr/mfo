@@ -3,13 +3,25 @@
 from __future__ import annotations
 
 from mfo.vision.detect import (
+    DEFAULT_CLASS_LABELS,
     BaselineConfig,
     ConnectedComponentsDetector,
     DetectedRegion,
+    DetectionModel,
+    DetectorDependencyError,
+    FallbackDetector,
+    MLDetector,
+    MLDetectorConfig,
+    OnnxDetectionModel,
     RegionDetector,
     baseline_detector,
+    classify_region,
+    decode_detections,
+    default_model_dir,
     detect_file,
     get_detector,
+    ml_detector,
+    non_max_suppression,
 )
 from mfo.vision.images import (
     SUPPORTED_SUFFIXES,
@@ -43,13 +55,25 @@ from mfo.vision.preprocess import (
 
 __all__ = [
     # detect
+    "DEFAULT_CLASS_LABELS",
     "BaselineConfig",
     "ConnectedComponentsDetector",
     "DetectedRegion",
+    "DetectionModel",
+    "DetectorDependencyError",
+    "FallbackDetector",
+    "MLDetector",
+    "MLDetectorConfig",
+    "OnnxDetectionModel",
     "RegionDetector",
     "baseline_detector",
+    "classify_region",
+    "decode_detections",
+    "default_model_dir",
     "detect_file",
     "get_detector",
+    "ml_detector",
+    "non_max_suppression",
     # images
     "SUPPORTED_SUFFIXES",
     "ImageError",

@@ -249,13 +249,18 @@ def preprocess(
 def detect(
     path: Annotated[Path, typer.Argument(help="Project directory.")],
     detector: Annotated[
-        str, typer.Option("--detector", help="Region detector to use.")
+        str, typer.Option("--detector", help="Region detector to use ('baseline' or 'ml').")
     ] = "baseline",
     force: Annotated[
         bool, typer.Option("--force", help="Re-detect even if a current result is cached.")
     ] = False,
 ) -> None:
-    """Detect text regions on imported pages (offline baseline; no model download)."""
+    """Detect text regions on imported pages.
+
+    The default 'baseline' detector is offline and needs no model download; 'ml' uses a trained
+    detector when available (pip install 'mfo[detect]') and transparently falls back to the
+    baseline if the dependency or model is absent.
+    """
     try:
         engine = get_detector(detector)
     except ValueError as exc:
