@@ -24,6 +24,7 @@ from numpy.typing import NDArray
 from PIL import Image
 
 from mfo.core.geometry import BBox
+from mfo.vision._paddle import _prefer_paddle_cpu_runtime
 
 Uint8Array = NDArray[np.uint8]
 
@@ -133,6 +134,7 @@ class PaddleOcrEngine:
 
     def _ensure_model(self) -> Any:
         if self._model is None:
+            _prefer_paddle_cpu_runtime()
             try:
                 from paddleocr import PaddleOCR
             except ImportError as exc:  # optional dependency not installed

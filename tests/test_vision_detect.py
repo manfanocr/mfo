@@ -7,6 +7,7 @@ letterbox/decode geometry, threshold/order, lazy model resolution, and the basel
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +16,7 @@ from PIL import Image
 
 from mfo.core.enums import RegionStatus, RegionType
 from mfo.core.geometry import BBox
+from mfo.vision._paddle import _prefer_paddle_cpu_runtime
 from mfo.vision.detect import (
     DEFAULT_CLASS_LABELS,
     ConnectedComponentsDetector,
@@ -244,6 +246,20 @@ def _break_paddle(monkeypatch: pytest.MonkeyPatch) -> None:
             raise RuntimeError("paddlepaddle backend is not installed")
 
         monkeypatch.setattr(paddleocr, "TextDetection", _boom)
+
+
+def test_prefer_paddle_cpu_runtime_defaults_off_but_respects_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # PaddleOCR 3.x crashes under its default MKLDNN runtime on some CPUs; the adapter defaults the
+    # flag off, but a user who knows their CPU is fine can re-enable it.
+    monkeypatch.delenv("PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT", raising=False)
+    _prefer_paddle_cpu_runtime()
+    assert os.environ["PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT"] == "False"
+
+    monkeypatch.setenv("PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT", "True")
+    _prefer_paddle_cpu_runtime()  # setdefault must not clobber an explicit user choice
+    assert os.environ["PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT"] == "True"
 
 
 def test_paddle_boxes_flattens_3x_detection_results() -> None:
