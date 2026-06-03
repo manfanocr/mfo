@@ -8,6 +8,22 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 
 ## [Unreleased]
 
+### M7 — AI-Assisted Refinement
+
+#### Added — Batch 7.1: AI assist adapter (2026-06-03)
+- **AI assist layer** (`mfo.language.assist`): an opt-in LLM adapter (`AiAssistant` protocol +
+  `LlmAssistant` over any OpenAI-compatible endpoint) that turns a recognized line and its draft
+  translation into a **structured** `AssistSuggestion` — candidate, literal rendering, readability
+  rewrite, bubble-fit shortened alternative, confidence (clamped to `[0, 1]`), rationale, free-form
+  warnings, and a likely-speaker-shift hint. It is **never on the core path**: no offline default
+  assistant, lazy, configured entirely from `MFO_AI_*` env vars (falling back to the `MFO_API_*` set
+  so one endpoint serves translation and AI review), sending only text and context — never the page
+  image — through the shared injectable transport, so it is unit-testable offline and adds no hard
+  dependency. Reply parsing is defensive (code-fence stripping, missing/partial fields degrade to
+  `None`/`[]`, confidence clamped) and uncertainty is surfaced, not hidden. Wiring this into AI
+  *modes* and the review queue is batches 7.2/7.3. (FR-27, FR-28, FR-30; §12.1/12.3/12.5; NFR-17,
+  NFR-24, NFR-25)
+
 ### Post-MVP — review-editor & engine improvements (outside the PLAN batches)
 
 Hardening and feature work on top of the completed M0–M6 MVP, driven by real use of the review

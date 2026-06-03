@@ -266,11 +266,14 @@ plugs into.
 
 ## M7 — AI-Assisted Refinement (post-MVP)
 
-### Batch 7.1 — AI assist adapter
+### Batch 7.1 — AI assist adapter ✅ *(landed 2026-06-03)*
 - **Scope:** Optional LLM adapter producing candidate + literal + readability rewrite +
   confidence + rationale + warnings; bubble-fit shortening; speaker-shift hints.
 - **Satisfies:** FR-27, FR-28, FR-30; §12.1/12.3/12.5.
 - **DoD:** Produces structured suggestions; disabled by default; offline core unaffected.
+- **Shipped:** `mfo.language.assist` (`AiAssistant`/`LlmAssistant`, `AssistRequest`,
+  `AssistSuggestion`, `get_assistant`); env-only `MFO_AI_*` config (falls back to `MFO_API_*`);
+  defensive JSON parsing; full offline test coverage. See CHANGELOG.
 
 ### Batch 7.2 — AI modes
 - **Scope:** Assist / Review / Auto modes (§12.4); auto applies only high-confidence and keeps

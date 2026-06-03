@@ -2,6 +2,16 @@
 
 from __future__ import annotations
 
+from mfo.language.assist import (
+    AiAssistant,
+    AiAssistantConfig,
+    AssistDependencyError,
+    AssistRequest,
+    AssistSuggestion,
+    LlmAssistant,
+    ai_assistant,
+    get_assistant,
+)
 from mfo.language.translate import (
     ApiTranslator,
     ApiTranslatorConfig,
@@ -35,4 +45,13 @@ __all__ = [
     "argos_translator",
     "deepl_translator",
     "get_translator",
+    # assist (AI layer, batch 7.1)
+    "AiAssistant",
+    "AiAssistantConfig",
+    "AssistDependencyError",
+    "AssistRequest",
+    "AssistSuggestion",
+    "LlmAssistant",
+    "ai_assistant",
+    "get_assistant",
 ]
