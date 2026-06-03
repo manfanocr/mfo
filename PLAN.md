@@ -206,7 +206,7 @@ plugs into.
 - **Satisfies:** FR-23, FR-24, FR-25; SG-2/3/4 groundwork; §12.5.
 - **DoD:** Glossary terms enforced; style toggle changes output; consistency test.
 
-### Batch 4.3 — Traceability & mapping export
+### Batch 4.3 — Traceability & mapping export ✅ *(landed — see CHANGELOG)*
 - **Scope:** Selected translation per unit, full link graph source→OCR→translation, JSON export
   of mappings; `EditRecord` scaffolding.
 - **Satisfies:** I-2, I-6, FR-26 (data), FR-41/42/43; MVP-7; §21.

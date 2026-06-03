@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -11,8 +12,8 @@ from typer.testing import CliRunner
 
 from mfo.cli import app
 from mfo.cli.stages import build_pipeline
-from mfo.core import OCRSpan, Page, Region, TranslationUnit
-from mfo.core.enums import RegionStatus
+from mfo.core import OCRSpan, Page, Region, TranslationCandidate, TranslationUnit
+from mfo.core.enums import CandidateKind, RegionStatus
 from mfo.core.geometry import BBox
 from mfo.storage import ProjectStore
 
@@ -426,6 +427,56 @@ def test_glossary_add_replaces_same_source(tmp_path: Path) -> None:
         entries = store.project.config["glossary"]
         assert len(entries) == 1
         assert entries[0]["target"] == "oni"
+
+
+def test_export_mapping_writes_json(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target), "--source", "ja", "--target", "en"])
+    with ProjectStore.open(target) as store:
+        page = Page(project_id=store.project.id, index=0, image_path="p0.png", width=10, height=10)
+        store.db.save(page)
+        region = Region(
+            page_id=page.id, bbox=BBox(x=1, y=2, width=3, height=4), reading_order_index=0
+        )
+        store.db.save(region)
+        store.db.save(OCRSpan(region_id=region.id, text="こんにちは", confidence=0.9))
+        candidate = TranslationCandidate(text="Hello", kind=CandidateKind.RAW)
+        store.db.save(
+            TranslationUnit(
+                page_id=page.id,
+                ordered_region_ids=[region.id],
+                source_bundle="こんにちは",
+                candidates=[candidate],
+                selected_candidate_id=candidate.id,
+            )
+        )
+
+    result = runner.invoke(app, ["export", str(target), "--mapping"])
+    assert result.exit_code == 0, result.output
+    out = target / "exports" / "mapping.json"
+    assert out.is_file()
+    loaded = json.loads(out.read_text(encoding="utf-8"))
+    unit = loaded["units"][0]
+    assert unit["translation"] == "Hello"
+    assert unit["regions"][0]["ocr"][0]["text"] == "こんにちは"
+    assert unit["regions"][0]["bbox"] == {"x": 1.0, "y": 2.0, "width": 3.0, "height": 4.0}
+
+
+def test_export_mapping_custom_out_dir(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    out_dir = tmp_path / "dump"
+    result = runner.invoke(app, ["export", str(target), "--mapping", "--out", str(out_dir)])
+    assert result.exit_code == 0, result.output
+    assert (out_dir / "mapping.json").is_file()
+
+
+def test_export_without_mapping_is_placeholder(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    result = runner.invoke(app, ["export", str(target)])
+    assert result.exit_code == 0
+    assert "5.3" in result.output
 
 
 def test_run_includes_translate_stage_once_ocr_configured(tmp_path: Path) -> None:

@@ -13,11 +13,13 @@ from mfo.storage.confidence import (
 )
 from mfo.storage.db import SCHEMA_VERSION, Database
 from mfo.storage.detect import RegionCandidate, detect_regions
+from mfo.storage.edits import list_edits, record_edit
 from mfo.storage.grouping import group_into_units
 from mfo.storage.hashing import content_key, sha256_bytes, sha256_file
 from mfo.storage.ingest import SourceImage, import_pages
 from mfo.storage.layout import DB_NAME, MANIFEST_NAME, SUBDIRS, ProjectLayout
 from mfo.storage.manifest import MANIFEST_VERSION, Manifest, read_manifest, write_manifest
+from mfo.storage.mapping import MAPPING_VERSION, build_mapping, write_mapping
 from mfo.storage.ocr import RecognizedSpan, ocr_regions
 from mfo.storage.pipeline_state import JsonStateStore
 from mfo.storage.preprocess import preprocess_pages
@@ -74,6 +76,13 @@ __all__ = [
     # translate
     "translate_units",
     "Translated",
+    # edits
+    "record_edit",
+    "list_edits",
+    # mapping
+    "build_mapping",
+    "write_mapping",
+    "MAPPING_VERSION",
     # project
     "ProjectStore",
 ]

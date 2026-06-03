@@ -9,6 +9,28 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 4.3 — Traceability & mapping export** (M4 Translation):
+  - `mfo.core.traceability`: pure helpers resolving a unit's *selected* translation — `selected_candidate`
+    returns the candidate the unit currently points at (or `None`), `selected_text` the text that would be
+    rendered (empty when unselected). One place for the "which translation wins" rule that both the mapping
+    export and the render stage consume (FR-26).
+  - `mfo.storage.edits`: `EditRecord` scaffolding — `record_edit` appends an immutable, append-only change
+    record for a unit; `list_edits` returns them oldest-first (optionally per unit). Human (and later
+    auto-applied) edits stay auditable and reversible (I-3), the foundation the review editor (M6) builds on.
+  - `mfo.storage.mapping`: `build_mapping` assembles the full **source → OCR → translation → edit** link
+    graph keyed on stable entity IDs (FR-41) — for every translation unit, its page, the source bounding box
+    + OCR text of each region, the unit's translation history (candidates) and applied edits, and its
+    selected translation (FR-42). `write_mapping` dumps it to UTF-8 JSON (FR-43). Output is deterministic
+    (pages by index, units by reading order, regions in stored order) so the same project yields a
+    byte-stable mapping (NFR-26).
+  - `mfo export --mapping` writes the mapping to `exports/mapping.json` (or `--out <dir>/mapping.json`),
+    tracing every output region back to its source (DoD). Bare `mfo export` (page render) remains a 5.3
+    placeholder.
+  - Tests: core traceability (selected candidate/text incl. unselected + bare unit); storage edits
+    (append-only persistence, oldest-first ordering, per-unit filtering); mapping (every region traced to
+    page/bbox/OCR, translation history preserved, edit history included, selected-candidate reflected,
+    UTF-8 JSON round-trip); CLI `export --mapping` (default + custom out dir) and the bare-export placeholder.
+  - Satisfies: I-2, I-6; FR-26 (data), FR-41, FR-42, FR-43; MVP-7; NFR-26; spec §7.6, §21.
 - **Batch 4.2 — Glossary, terminology & style** (M4 Translation):
   - `mfo.core.glossary`: a pure, I/O-free module for terminology consistency. A frozen, serializable
     `GlossaryEntry` pins a source term to a canonical target plus the variant spellings (`aliases`) a
@@ -321,10 +343,11 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   — ML detector adapter** can be picked up any time, as it is not on the MVP-critical path. M3 landed
   3.1 (reading order) and 3.2 (dialogue grouping), satisfying MVP-5; the optional **batch 3.3 — panel
   detection** (best-effort panel boundaries to refine reading order, or cleanly disabled) remains and
-  is off the MVP-critical path. M4 landed 4.1 (translation adapter + context builder) and 4.2 (glossary,
-  terminology & style). Next up: **batch 4.3 — Traceability & mapping export** (selected translation per
-  unit, full source→OCR→translation link graph, JSON mapping export via `mfo export --mapping`, and
-  `EditRecord` scaffolding; MVP-7), then the optional 4.4 (API translation adapter).
+  is off the MVP-critical path. M4 landed 4.1 (translation adapter + context builder), 4.2 (glossary,
+  terminology & style), and 4.3 (traceability & mapping export, MVP-7) — completing M4's MVP scope. The
+  optional **batch 4.4 — API translation adapter** (opt-in cloud/LLM translation behind explicit config,
+  never default) remains and is off the MVP-critical path. Next up: **M5 (Rendering & Export)**, starting
+  with **batch 5.1 — text masking / removal**.
 
 <!--
 Template for a landed batch:

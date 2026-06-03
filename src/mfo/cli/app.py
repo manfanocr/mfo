@@ -2,9 +2,9 @@
 
 Commands are deliberately thin: they resolve configuration and a project, then delegate to the
 core/storage/vision layers. ``init``, ``import``, ``preprocess``, ``detect``, ``order``, ``group``,
-``ocr``, ``translate``, ``glossary`` (add/list/remove), ``flag``, ``status``, and ``run`` (the
-pipeline orchestrator) are functional; ``export`` and ``review`` are wired to a real project but
-their processing bodies arrive in later milestones (batches 5.3, 6.2).
+``ocr``, ``translate``, ``glossary`` (add/list/remove), ``flag``, ``status``, ``export --mapping``
+(the source→OCR→translation JSON link graph), and ``run`` (the pipeline orchestrator) are
+functional; page ``export`` and ``review`` arrive in later milestones (batches 5.3, 6.2).
 """
 
 from __future__ import annotations
@@ -59,6 +59,7 @@ from mfo.storage import (
     ocr_regions,
     preprocess_pages,
     translate_units,
+    write_mapping,
 )
 from mfo.vision import (
     OcrDependencyError,
@@ -553,11 +554,23 @@ def run(
 def export(
     path: Annotated[Path, typer.Argument(help="Project directory.")],
     out: Annotated[Path | None, typer.Option("--out", "-o", help="Output directory.")] = None,
+    mapping: Annotated[
+        bool,
+        typer.Option(
+            "--mapping", help="Export the source→OCR→translation mapping as JSON (FR-43)."
+        ),
+    ] = False,
 ) -> None:
-    """Export translated pages and mappings (placeholder)."""
-    with _open_store(path):
-        pass
-    _not_yet("Export", "5.3")
+    """Export translated pages and the source→OCR→translation mapping (--mapping; FR-41/42/43)."""
+    with _open_store(path) as store:
+        if mapping:
+            out_dir = out if out is not None else store.layout.exports_dir
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_path = out_dir / "mapping.json"
+            write_mapping(store, out_path)
+            typer.secho(f"Wrote mapping to {out_path}", fg=typer.colors.GREEN)
+            return
+    _not_yet("Page export", "5.3")
 
 
 @app.command()

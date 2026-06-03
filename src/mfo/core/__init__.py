@@ -48,6 +48,7 @@ from mfo.core.pipeline import (
     StateStore,
 )
 from mfo.core.reading_order import order_regions
+from mfo.core.traceability import selected_candidate, selected_text
 
 __all__ = [
     # confidence
@@ -59,6 +60,9 @@ __all__ = [
     "build_context",
     # reading order
     "order_regions",
+    # traceability
+    "selected_candidate",
+    "selected_text",
     # glossary
     "GlossaryEntry",
     "apply_glossary",
