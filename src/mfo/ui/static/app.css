@@ -36,6 +36,13 @@
   box-sizing: border-box;
 }
 
+/* The `hidden` attribute must always win: elements like .empty (display:flex) and #render-preview
+   (display:block) set an explicit display that would otherwise override the UA `[hidden]` rule,
+   leaving invisible overlays that swallow clicks on the canvas and inspector. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   height: 100%;
@@ -276,21 +283,86 @@ h2 {
   border-color: var(--bad);
 }
 
-/* Drag handle (bottom-right) for resizing the selected region (FR-38). */
+/* Drag handles on every edge/corner for resizing the selected region (FR-38). */
 .region-handle {
   position: absolute;
-  right: -6px;
-  bottom: -6px;
-  width: 12px;
-  height: 12px;
+  width: 11px;
+  height: 11px;
   background: var(--accent);
   border: 2px solid var(--bg);
   border-radius: 50%;
+}
+
+.handle-nw {
+  left: -6px;
+  top: -6px;
   cursor: nwse-resize;
+}
+.handle-n {
+  left: 50%;
+  top: -6px;
+  transform: translateX(-50%);
+  cursor: ns-resize;
+}
+.handle-ne {
+  right: -6px;
+  top: -6px;
+  cursor: nesw-resize;
+}
+.handle-e {
+  right: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: ew-resize;
+}
+.handle-se {
+  right: -6px;
+  bottom: -6px;
+  cursor: nwse-resize;
+}
+.handle-s {
+  left: 50%;
+  bottom: -6px;
+  transform: translateX(-50%);
+  cursor: ns-resize;
+}
+.handle-sw {
+  left: -6px;
+  bottom: -6px;
+  cursor: nesw-resize;
+}
+.handle-w {
+  left: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: ew-resize;
 }
 
 .region-box.dragging {
   cursor: grabbing;
+}
+
+/* The rubber-band box while drawing a new region, and the crosshair cursor for that mode. */
+#canvas-viewport.creating {
+  cursor: crosshair;
+}
+
+/* While drawing, existing boxes must not swallow the mousedown that starts the rubber-band. */
+#canvas-viewport.creating .region-box {
+  pointer-events: none;
+}
+
+.region-box.draw-ghost {
+  border-style: dashed;
+  border-color: var(--good);
+  background: rgba(76, 199, 127, 0.14);
+  pointer-events: none;
+}
+
+#create-btn.active {
+  background: var(--good);
+  color: var(--accent-fg);
+  border-color: var(--good);
 }
 
 /* Rendered-page preview layer over the canvas (§13.3). */
@@ -479,6 +551,21 @@ h2 {
 .btn-row button.active {
   border-color: var(--accent);
   box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.btn-row button.danger {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+
+.btn-row button.danger:hover {
+  background: var(--bad);
+  color: var(--accent-fg);
+}
+
+.hint {
+  margin: 0 0 6px;
+  font-size: 11px;
 }
 
 .cand {

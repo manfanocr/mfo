@@ -24,9 +24,13 @@ const state = {
   marked: new Set(), // region_ids tagged for a merge (shift-click)
   queue: [], // review-queue entries, low-confidence first
   preview: false, // showing the re-rendered page over the source
+  createMode: false, // drawing a new region instead of panning
   zoom: 1,
   pan: { x: 0, y: 0 },
 };
+
+// Resize handles around the selected region, and which box edges each one moves.
+const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 
 // -- tiny helpers -------------------------------------------------------------------------
 
@@ -183,9 +187,11 @@ function drawRegions() {
     box.addEventListener("mousedown", (e) => onRegionMouseDown(e, i));
     if (i === state.selected) {
       box.classList.add("selected");
-      const handle = el("div", { class: "region-handle" });
-      handle.addEventListener("mousedown", (e) => onResizeMouseDown(e, i));
-      box.append(handle);
+      for (const dir of HANDLES) {
+        const handle = el("div", { class: `region-handle handle-${dir}` });
+        handle.addEventListener("mousedown", (e) => onResizeMouseDown(e, i, dir));
+        box.append(handle);
+      }
     }
     overlay.append(box);
   });
@@ -289,8 +295,17 @@ function regionOpsSection(region) {
   up.addEventListener("click", () => nudgeOrder(-1));
   const down = el("button", { title: "Move later in reading order", text: "Order ↓" });
   down.addEventListener("click", () => nudgeOrder(1));
-  row.append(split, splitV, merge, up, down);
-  return section("Region ops", [row]);
+  const del = el("button", { class: "danger", title: "Delete region (Del)", text: "Delete ✕" });
+  del.addEventListener("click", deleteRegion);
+  row.append(split, splitV, merge, up, down, del);
+  return section("Region ops", [el("p", { class: "muted hint", text: mergeHint() }), row]);
+}
+
+// Merge needs ≥2 regions tagged; nudge the user toward shift-click when they haven't yet.
+function mergeHint() {
+  return state.marked.size
+    ? `${state.marked.size} region(s) marked — press Merge or m.`
+    : "Shift-click regions to mark them, then Merge.";
 }
 
 function ocrSection(region) {
@@ -482,6 +497,85 @@ async function nudgeOrder(delta) {
   }
 }
 
+async function deleteRegion() {
+  const region = selectedRegion();
+  if (!region) return;
+  try {
+    const view = await sendJSON("DELETE", `/api/regions/${region.region_id}`);
+    state.marked.delete(region.region_id);
+    state.selected = null;
+    applyPageView(view);
+    invalidatePreview();
+    status("Region deleted.");
+  } catch (err) {
+    status(`Delete failed: ${err.message}`);
+  }
+}
+
+// -- create region: draw a box, then OCR + translate it (§13.3) ---------------------------
+
+function toggleCreateMode(on) {
+  state.createMode = on === undefined ? !state.createMode : on;
+  $("#create-btn").classList.toggle("active", state.createMode);
+  $("#canvas-viewport").classList.toggle("creating", state.createMode);
+  status(state.createMode ? "Draw a box for the new region (Esc to cancel)." : "");
+}
+
+// Viewport client coords → source-image (stage-local) coords, undoing the pan/zoom transform.
+function toImageCoords(clientX, clientY) {
+  const vp = $("#canvas-viewport").getBoundingClientRect();
+  return {
+    x: (clientX - vp.left - state.pan.x) / state.zoom,
+    y: (clientY - vp.top - state.pan.y) / state.zoom,
+  };
+}
+
+function startDraw(e) {
+  if (!state.page) return;
+  const origin = toImageCoords(e.clientX, e.clientY);
+  const ghost = el("div", { class: "region-box draw-ghost" });
+  $("#region-overlay").append(ghost);
+
+  function rect(ev) {
+    const p = toImageCoords(ev.clientX, ev.clientY);
+    return {
+      x: Math.min(origin.x, p.x),
+      y: Math.min(origin.y, p.y),
+      width: Math.abs(p.x - origin.x),
+      height: Math.abs(p.y - origin.y),
+    };
+  }
+  function onMove(ev) {
+    const b = rect(ev);
+    ghost.style.left = `${b.x}px`;
+    ghost.style.top = `${b.y}px`;
+    ghost.style.width = `${b.width}px`;
+    ghost.style.height = `${b.height}px`;
+  }
+  function onUp(ev) {
+    window.removeEventListener("mousemove", onMove);
+    window.removeEventListener("mouseup", onUp);
+    ghost.remove();
+    const b = rect(ev);
+    toggleCreateMode(false);
+    if (b.width >= 4 && b.height >= 4) createRegion(b);
+  }
+  window.addEventListener("mousemove", onMove);
+  window.addEventListener("mouseup", onUp);
+}
+
+async function createRegion(bbox) {
+  try {
+    status("Creating region — OCR + translate…");
+    const view = await sendJSON("POST", `/api/pages/${state.page.page_id}/regions`, bbox);
+    applyPageView(view);
+    invalidatePreview();
+    status("Region created (OCR + translated).");
+  } catch (err) {
+    status(`Create failed: ${err.message}`);
+  }
+}
+
 // -- re-render preview (§13.3) ------------------------------------------------------------
 
 async function showPreview() {
@@ -660,27 +754,55 @@ function onRegionMouseDown(e, i) {
   window.addEventListener("mouseup", onUp);
 }
 
-function onResizeMouseDown(e, i) {
+// Resize the selected box by dragging any edge/corner handle (FR-38). `dir` is a compass string
+// (n/s/e/w and corners) naming which edges move; the opposite edges stay pinned.
+function onResizeMouseDown(e, i, dir) {
   e.stopPropagation();
   e.preventDefault();
   const region = state.regions[i];
   const start = { x: e.clientX, y: e.clientY };
   const origin = { ...region.bbox };
   const box = e.currentTarget.parentElement;
+  const west = dir.includes("w");
+  const east = dir.includes("e");
+  const north = dir.includes("n");
+  const south = dir.includes("s");
 
+  function compute(ev) {
+    const dx = (ev.clientX - start.x) / state.zoom;
+    const dy = (ev.clientY - start.y) / state.zoom;
+    let { x, y, width, height } = origin;
+    if (east) width = Math.max(1, origin.width + dx);
+    if (west) {
+      width = Math.max(1, origin.width - dx);
+      x = origin.x + (origin.width - width); // keep the east edge fixed
+    }
+    if (south) height = Math.max(1, origin.height + dy);
+    if (north) {
+      height = Math.max(1, origin.height - dy); // keep the south edge fixed
+      y = origin.y + (origin.height - height);
+    }
+    return { x, y, width, height };
+  }
+  function apply(b) {
+    box.style.left = `${b.x}px`;
+    box.style.top = `${b.y}px`;
+    box.style.width = `${b.width}px`;
+    box.style.height = `${b.height}px`;
+  }
   function onMove(ev) {
-    const w = Math.max(1, origin.width + (ev.clientX - start.x) / state.zoom);
-    const h = Math.max(1, origin.height + (ev.clientY - start.y) / state.zoom);
-    box.style.width = `${w}px`;
-    box.style.height = `${h}px`;
+    apply(compute(ev));
   }
   function onUp(ev) {
     window.removeEventListener("mousemove", onMove);
     window.removeEventListener("mouseup", onUp);
-    const w = Math.max(1, origin.width + (ev.clientX - start.x) / state.zoom);
-    const h = Math.max(1, origin.height + (ev.clientY - start.y) / state.zoom);
-    if (Math.abs(w - origin.width) < 1 && Math.abs(h - origin.height) < 1) return;
-    saveRegionBBox(region, { x: origin.x, y: origin.y, width: w, height: h });
+    const b = compute(ev);
+    const moved =
+      Math.abs(b.x - origin.x) >= 1 ||
+      Math.abs(b.y - origin.y) >= 1 ||
+      Math.abs(b.width - origin.width) >= 1 ||
+      Math.abs(b.height - origin.height) >= 1;
+    if (moved) saveRegionBBox(region, b);
   }
   window.addEventListener("mousemove", onMove);
   window.addEventListener("mouseup", onUp);
@@ -730,6 +852,10 @@ function wirePanZoom() {
   let last = { x: 0, y: 0 };
 
   vp.addEventListener("mousedown", (e) => {
+    if (state.createMode) {
+      startDraw(e); // drawing a new region takes over from panning
+      return;
+    }
     dragging = true;
     last = { x: e.clientX, y: e.clientY };
     vp.classList.add("panning");
@@ -767,6 +893,18 @@ function wireKeyboard() {
       return;
     }
     switch (e.key) {
+      case "Delete":
+      case "Backspace":
+        e.preventDefault();
+        deleteRegion();
+        break;
+      case "a":
+        e.preventDefault();
+        toggleCreateMode();
+        break;
+      case "Escape":
+        if (state.createMode) toggleCreateMode(false);
+        break;
       case "ArrowDown":
       case "j":
         e.preventDefault();
@@ -832,6 +970,7 @@ function init() {
   $("#zoom-fit").addEventListener("click", fitPage);
   $("#theme-toggle").addEventListener("click", toggleTheme);
   $("#render-toggle").addEventListener("click", togglePreview);
+  $("#create-btn").addEventListener("click", () => toggleCreateMode());
   $("#queue-btn").addEventListener("click", toggleQueue);
   window.addEventListener("resize", () => applyTransform());
 
