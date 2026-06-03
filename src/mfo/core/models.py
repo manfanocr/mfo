@@ -78,6 +78,9 @@ class Page(MfoModel):
     grouping: dict[str, Any] = Field(default_factory=dict)
     # Translation provenance (translator id + target lang + units sig), for cache/skip (NFR-8).
     translation: dict[str, Any] = Field(default_factory=dict)
+    # AI-assist provenance (assistant id + mode + units sig), for cache/skip (NFR-8); empty until
+    # the optional AI layer runs (I-7).
+    assist: dict[str, Any] = Field(default_factory=dict)
 
 
 class Region(MfoModel):

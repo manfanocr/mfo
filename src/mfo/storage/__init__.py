@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from mfo.storage.assist import DEFAULT_MIN_CONFIDENCE, Suggested, assist_units
 from mfo.storage.atomic import atomic_write_bytes, atomic_write_text
 from mfo.storage.cache import Cache
 from mfo.storage.confidence import (
@@ -85,6 +86,10 @@ __all__ = [
     # translate
     "translate_units",
     "Translated",
+    # assist (AI layer, batch 7.2)
+    "assist_units",
+    "Suggested",
+    "DEFAULT_MIN_CONFIDENCE",
     # edits
     "record_edit",
     "list_edits",

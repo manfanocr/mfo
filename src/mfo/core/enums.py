@@ -56,6 +56,18 @@ class CandidateKind(StrEnum):
     MANUAL = "manual"  # human-entered
 
 
+class AssistMode(StrEnum):
+    """How AI suggestions are applied to translation units (spec §12.4).
+
+    All modes attach AI candidates non-destructively; they differ only in whether they change the
+    *selected* candidate, and never override human-approved text (FR-29, I-3).
+    """
+
+    ASSIST = "assist"  # attach suggestions only; never change the selection
+    REVIEW = "review"  # also highlight the AI candidate as the recommended one
+    AUTO = "auto"  # also auto-apply high-confidence suggestions, with an audit trail
+
+
 class EditAction(StrEnum):
     """Type of change recorded in an EditRecord (spec FR-42)."""
 

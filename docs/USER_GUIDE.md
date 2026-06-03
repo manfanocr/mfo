@@ -108,6 +108,43 @@ deliberately does **not** bundle one. Your supported options for Google-quality 
 
 ---
 
+## AI-assisted refinement (`mfo assist`)
+
+An **optional** layer that uses an LLM to refine your translations — more natural phrasing, a
+literal rendering, a readability rewrite, a shorter alternative for tight bubbles, a confidence
+estimate, a rationale, ambiguity warnings, and speaker-shift hints (FR-27/28/30, §12). It is
+**opt-in and off the core path**: nothing here runs unless you call `mfo assist`, it is *not* part
+of `mfo run`, and the offline pipeline is unaffected (I-7). It reuses the same OpenAI-compatible
+endpoint as the `api` translator — so a local Ollama model works here too — configured from
+`MFO_AI_*` env vars, falling back to the `MFO_API_*` set:
+
+```bash
+# reuse your api/Ollama endpoint, or point AI review at a stronger model:
+export MFO_API_BASE_URL="http://localhost:11434/v1"   # (or your OpenAI-compatible gateway)
+export MFO_API_KEY="ollama"
+export MFO_AI_MODEL="gemma3:12b"                       # MFO_AI_* overrides MFO_API_* for the AI layer
+mfo translate <proj>            # produce the draft translations first
+mfo assist <proj> --mode review # then refine them
+```
+
+Run it **after** `mfo translate` — it refines the existing draft, never the raw OCR alone. Three
+modes (`--mode`, §12.4), in increasing autonomy:
+
+| Mode | What it does to the selection |
+|------|-------------------------------|
+| `assist` *(default)* | Attaches AI suggestions as extra candidates; **never changes** which one is selected. |
+| `review` | Also **highlights** (selects) the AI candidate as the recommended one. |
+| `auto` | Also **applies** the AI candidate automatically — but only when its confidence ≥ `--min-confidence` (default `0.8`). |
+
+In **every** mode the AI only *adds* candidates — it never overwrites text, and it never changes the
+selection of a unit you've already edited by hand (a human/`manual` translation is left alone,
+FR-29). Any selection change `review`/`auto` makes is recorded as an audit edit (visible in the
+review editor's history), so it stays inspectable and reversible (I-3). Re-running is cached and
+idempotent; pass `--force` to re-run, and use `mfo review` to compare the AI candidate, literal,
+readability, and your own text side by side.
+
+---
+
 ## OCR engines (`mfo ocr --engine …`)
 
 | Name | Languages | Install |

@@ -23,6 +23,7 @@ from mfo.cli.stages import (
     build_pipeline,
     composite_page_file,
     load_glossary,
+    save_assist_config,
     save_detect_config,
     save_glossary,
     save_group_config,
@@ -35,6 +36,7 @@ from mfo.cli.stages import (
 )
 from mfo.core import (
     DEFAULT_THRESHOLD,
+    AssistMode,
     GlossaryEntry,
     OCRSpan,
     Page,
@@ -47,17 +49,22 @@ from mfo.core import (
 )
 from mfo.core.grouping import DEFAULT_GAP_RATIO
 from mfo.language import (
+    AssistDependencyError,
+    AssistRequest,
     TranslationRequest,
     TranslatorDependencyError,
+    get_assistant,
     get_translator,
 )
 from mfo.render import MaskConfig, mask_file
 from mfo.storage import (
+    DEFAULT_MIN_CONFIDENCE,
     MASK_KIND,
     RENDER_KIND,
     JsonStateStore,
     ProjectStore,
     assign_reading_order,
+    assist_units,
     composite_pages,
     confidence_report,
     detect_regions,
@@ -375,6 +382,74 @@ def translate(
             typer.secho(str(exc), fg=typer.colors.RED, err=True)
             raise typer.Exit(code=1) from None
     typer.secho(f"Translated {len(units)} unit(s) ({style.value}).", fg=typer.colors.GREEN)
+
+
+@app.command()
+def assist(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+    mode: Annotated[
+        AssistMode,
+        typer.Option(
+            "--mode",
+            help="AI mode (§12.4): 'assist' (suggest only), 'review' (highlight the AI candidate), "
+            "or 'auto' (apply high-confidence suggestions). Never overwrites approved text.",
+        ),
+    ] = AssistMode.ASSIST,
+    assistant: Annotated[
+        str, typer.Option("--assistant", help="AI assistant adapter (MFO_AI_* / MFO_API_* env).")
+    ] = "llm",
+    min_confidence: Annotated[
+        float,
+        typer.Option(
+            "--min-confidence",
+            min=0.0,
+            max=1.0,
+            help="Confidence an 'auto' suggestion must reach before it is applied.",
+        ),
+    ] = DEFAULT_MIN_CONFIDENCE,
+    style: Annotated[
+        TranslationStyle, typer.Option("--style", help="Translation register (FR-25).")
+    ] = TranslationStyle.BALANCED,
+    force: Annotated[
+        bool, typer.Option("--force", help="Re-run even if a current result is cached.")
+    ] = False,
+) -> None:
+    """Refine translations with the optional AI layer (opt-in; configured from MFO_AI_*/MFO_API_*).
+
+    Disabled by default and not part of ``mfo run`` — the offline core is unaffected (I-7).
+    """
+    try:
+        engine = get_assistant(assistant)
+    except ValueError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from None
+    signature = f"{engine.name}@{engine.version}"
+    with _open_store(path) as store:
+        save_assist_config(store, assistant, mode=mode, min_confidence=min_confidence, style=style)
+        source_lang = store.project.source_lang
+        target_lang = store.project.target_lang
+        try:
+            units = assist_units(
+                store,
+                suggest=lambda source, draft, context: engine.suggest(
+                    AssistRequest(
+                        source=source,
+                        source_lang=source_lang,
+                        target_lang=target_lang,
+                        draft=draft,
+                        context=context,
+                        style=style,
+                    )
+                ),
+                signature=signature,
+                mode=mode,
+                min_confidence=min_confidence,
+                force=force,
+            )
+        except AssistDependencyError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from None
+    typer.secho(f"AI {mode.value}: processed {len(units)} unit(s).", fg=typer.colors.GREEN)
 
 
 glossary_app = typer.Typer(

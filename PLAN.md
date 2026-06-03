@@ -275,11 +275,15 @@ plugs into.
   `AssistSuggestion`, `get_assistant`); env-only `MFO_AI_*` config (falls back to `MFO_API_*`);
   defensive JSON parsing; full offline test coverage. See CHANGELOG.
 
-### Batch 7.2 — AI modes
+### Batch 7.2 — AI modes ✅ *(landed 2026-06-03)*
 - **Scope:** Assist / Review / Auto modes (§12.4); auto applies only high-confidence and keeps
   full audit trail; never overwrites approved text.
 - **Satisfies:** I-3, I-7, FR-29; §12.4.
 - **DoD:** Each mode behaves per spec; auto-applied changes are auditable and reversible.
+- **Shipped:** `AssistMode` enum; `mfo.storage.assist.assist_units` (attaches AI candidates,
+  resolves selection per mode, records audit edits, page-level cache); `mfo assist` CLI command
+  (`--mode/--assistant/--min-confidence/--style`, off the default `run`); `save_assist_config`;
+  USER_GUIDE section. See CHANGELOG.
 
 ### Batch 7.3 — Confidence-driven review integration
 - **Scope:** Wire AI confidence + uncertainty into the M6 review queue and flags.

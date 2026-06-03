@@ -19,7 +19,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from mfo.core.enums import ReadingDirection, TranslationStyle
+from mfo.core.enums import AssistMode, ReadingDirection, TranslationStyle
 from mfo.core.glossary import GlossaryEntry, entries_from_config, entries_to_config
 from mfo.core.grouping import DEFAULT_GAP_RATIO
 from mfo.core.pipeline import Pipeline, Stage
@@ -383,6 +383,25 @@ def save_translate_config(
     """Persist the translator and style so ``mfo run`` reproduces them (NFR-17, FR-25, FR-48)."""
     project_config = dict(store.project.config)
     project_config["translate"] = {"translator": translator, "style": style.value}
+    store.set_project(store.project.model_copy(update={"config": project_config}))
+
+
+def save_assist_config(
+    store: ProjectStore,
+    assistant: str,
+    *,
+    mode: AssistMode,
+    min_confidence: float,
+    style: TranslationStyle = TranslationStyle.BALANCED,
+) -> None:
+    """Persist the AI-assist choices so they are reproducible (NFR-17, FR-48, §12.4)."""
+    project_config = dict(store.project.config)
+    project_config["assist"] = {
+        "assistant": assistant,
+        "mode": mode.value,
+        "min_confidence": min_confidence,
+        "style": style.value,
+    }
     store.set_project(store.project.model_copy(update={"config": project_config}))
 
 

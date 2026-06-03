@@ -9,6 +9,7 @@ from mfo.core.confidence import (
 )
 from mfo.core.context import DEFAULT_NEIGHBOR_WINDOW, build_context
 from mfo.core.enums import (
+    AssistMode,
     CandidateKind,
     EditAction,
     ReadingDirection,
@@ -81,6 +82,7 @@ __all__ = [
     "BBox",
     "Point",
     # enums
+    "AssistMode",
     "CandidateKind",
     "EditAction",
     "ReadingDirection",

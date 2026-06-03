@@ -426,6 +426,31 @@ def test_translate_persists_style(tmp_path: Path) -> None:
         assert store.project.config["translate"]["style"] == "natural"
 
 
+def test_assist_persists_config_and_reports_units(tmp_path: Path) -> None:
+    # The AI layer is opt-in: with no units it persists the choices but loads no backend and makes
+    # no network call (I-7, NFR-24). Nothing secret is written to disk (NFR-25).
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    result = runner.invoke(
+        app, ["assist", str(target), "--mode", "auto", "--min-confidence", "0.7"]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "AI auto" in result.stdout
+    with ProjectStore.open(target) as store:
+        config = store.project.config["assist"]
+        assert config["assistant"] == "llm"
+        assert config["mode"] == "auto"
+        assert config["min_confidence"] == 0.7
+        assert "api_key" not in config and "base_url" not in config
+
+
+def test_assist_unknown_assistant_exits_1(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    result = runner.invoke(app, ["assist", str(target), "--assistant", "nope"])
+    assert result.exit_code == 1
+
+
 def test_glossary_add_list_remove(tmp_path: Path) -> None:
     target = tmp_path / "vol"
     runner.invoke(app, ["init", str(target)])

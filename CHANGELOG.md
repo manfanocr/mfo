@@ -10,6 +10,23 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 
 ### M7 — AI-Assisted Refinement
 
+#### Added — Batch 7.2: AI modes (2026-06-03)
+- **AI application stage + three modes** (`mfo.storage.assist`, `AssistMode`, `mfo assist`): runs the
+  7.1 assistant over a project's translated units and persists structured suggestions as candidates,
+  resolving the *selection* per `--mode` (§12.4) — **assist** (suggest only), **review** (highlight
+  the AI candidate), **auto** (apply only when confidence ≥ `--min-confidence`, default `0.8`). The
+  AI primary becomes an `ai` candidate (carrying confidence + a rationale that folds in the shortened
+  alternative, warnings, and speaker-shift hint); distinct literal/readability renderings become
+  `literal`/`natural` candidates for side-by-side comparison. Across every mode it only **appends**
+  candidates, **never** changes the selection of a human-approved (`manual`) unit (FR-29), and
+  records each selection change it does make as an `EditRecord` (`editor="ai:<mode>"`) so it stays
+  auditable and reversible (I-3). The suggestion callable is injected (storage stays provider-free),
+  the refined draft is the machine/human translation (never a prior AI output) so re-runs are
+  idempotent, and a page-level signature skips unchanged pages (NFR-8). New `Page.assist` provenance;
+  the `mfo assist` command (`--mode/--assistant/--min-confidence/--style/--force`) is **opt-in and
+  not part of `mfo run`**, configured from `MFO_AI_*` (falling back to `MFO_API_*`), so the offline
+  core is untouched (I-7). Documented in `docs/USER_GUIDE.md`. (FR-29; §12.4; I-3, I-7)
+
 #### Added — Batch 7.1: AI assist adapter (2026-06-03)
 - **AI assist layer** (`mfo.language.assist`): an opt-in LLM adapter (`AiAssistant` protocol +
   `LlmAssistant` over any OpenAI-compatible endpoint) that turns a recognized line and its draft
