@@ -16,8 +16,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-# How many units on either side count as "nearby" dialogue for context.
-DEFAULT_NEIGHBOR_WINDOW = 1
+# How many units on either side count as "nearby" dialogue for context. With one translation unit
+# per bubble (the grouping default), this is the conversational window the context-aware translator
+# sees around each line; a wider window gives more surrounding dialogue (FR-22).
+DEFAULT_NEIGHBOR_WINDOW = 2
 
 
 def build_context(

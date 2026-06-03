@@ -14,8 +14,8 @@ def test_middle_unit_sees_neighbours_both_sides() -> None:
 
 def test_first_and_last_unit_have_one_sided_context() -> None:
     sources = ["a", "b", "c"]
-    first = build_context(sources, 0, page_index=0, page_count=3)
-    last = build_context(sources, 2, page_index=0, page_count=3)
+    first = build_context(sources, 0, page_index=0, page_count=3, window=1)
+    last = build_context(sources, 2, page_index=0, page_count=3, window=1)
     assert first["preceding"] == [] and first["following"] == ["b"]
     assert last["preceding"] == ["b"] and last["following"] == []
 
@@ -40,9 +40,10 @@ def test_page_locator_is_carried() -> None:
     assert bundle["page_count"] == 12
 
 
-def test_default_window_is_immediate_neighbours() -> None:
-    sources = ["a", "b", "c", "d"]
-    assert DEFAULT_NEIGHBOR_WINDOW == 1
+def test_default_window_spans_two_neighbours() -> None:
+    # With one unit per bubble, the default window carries two lines of context each side (FR-22).
+    sources = ["a", "b", "c", "d", "e"]
+    assert DEFAULT_NEIGHBOR_WINDOW == 2
     bundle = build_context(sources, 2, page_index=0, page_count=1)
-    assert bundle["preceding"] == ["b"]  # only the immediate predecessor
-    assert bundle["following"] == ["d"]
+    assert bundle["preceding"] == ["a", "b"]
+    assert bundle["following"] == ["d", "e"]

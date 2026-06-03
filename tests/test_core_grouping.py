@@ -84,6 +84,13 @@ def test_threshold_is_configurable() -> None:
     assert _labels(group_regions([top, bottom], max_gap_ratio=0.6)) == [["top", "bottom"]]
 
 
+def test_zero_ratio_disables_chaining() -> None:
+    # max_gap_ratio <= 0 forces one chain per region, even for adjacent same-type bubbles.
+    a = _region("a", x=0, y=0, order=0)
+    b = _region("b", x=0, y=44, order=1)  # would chain at the default ratio
+    assert _labels(group_regions([a, b], max_gap_ratio=0.0)) == [["a"], ["b"]]
+
+
 def test_does_not_mutate_input_regions() -> None:
     a = _region("a", x=0, y=0, order=0)
     b = _region("b", x=0, y=44, order=1)

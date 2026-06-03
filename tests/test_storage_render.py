@@ -113,6 +113,26 @@ def _add_unit(store: ProjectStore, page: Page, region: Region, text: str) -> Non
     )
 
 
+def test_page_placements_are_per_bubble(tmp_path: Path) -> None:
+    # With one unit per bubble, two close bubbles render as two placements in their own boxes —
+    # text no longer overflows a merged union box (items 8/10).
+    with _project_with_page(tmp_path / "proj", tmp_path / "src") as store:
+        page = store.db.list(Page)[0]
+        top = Region(page_id=page.id, bbox=BBox(x=2, y=2, width=8, height=8), reading_order_index=0)
+        bottom = Region(
+            page_id=page.id, bbox=BBox(x=2, y=12, width=8, height=8), reading_order_index=1
+        )
+        store.db.save_all([top, bottom])
+        _add_unit(store, page, top, "first")
+        _add_unit(store, page, bottom, "second")
+
+        placements = page_placements(store, page)
+        assert [p.text for p in placements] == ["first", "second"]
+        # Each placement keeps its own bubble box, not the union of both.
+        assert placements[0].bbox == top.bbox
+        assert placements[1].bbox == bottom.bbox
+
+
 def test_page_placements_skips_ignored_regions(tmp_path: Path) -> None:
     # An auto-ignored panel/frame region must not be typeset, even if a unit carries text (item 11).
     with _project_with_page(tmp_path / "proj", tmp_path / "src") as store:

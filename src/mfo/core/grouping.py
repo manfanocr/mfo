@@ -64,11 +64,14 @@ def group_regions(
 
     Regions are walked in reading order; each region either continues the current chain (when it is
     a close, same-type neighbour of the previous region) or starts a new one. Returns a list of
-    chains, each a list of regions in reading order.
+    chains, each a list of regions in reading order. A ``max_gap_ratio`` of ``0`` (or less) disables
+    chaining entirely, so each region becomes its own single-region chain.
     """
     ordered = sorted(regions, key=_ordering_key)
     if not ordered:
         return []
+    if max_gap_ratio <= 0:
+        return [[region] for region in ordered]
 
     chains: list[list[Region]] = [[ordered[0]]]
     for region in ordered[1:]:

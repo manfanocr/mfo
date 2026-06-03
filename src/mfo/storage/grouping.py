@@ -21,7 +21,7 @@ from __future__ import annotations
 import hashlib
 
 from mfo.core import Page, Region, TranslationUnit
-from mfo.core.grouping import DEFAULT_GAP_RATIO, group_regions
+from mfo.core.grouping import group_regions
 from mfo.storage.hashing import content_key
 from mfo.storage.project import ProjectStore
 
@@ -48,8 +48,15 @@ def group_into_units(
     max_gap_ratio: float | None = None,
     force: bool = False,
 ) -> list[TranslationUnit]:
-    """Group each page's regions into translation units; returns the units created."""
-    ratio = DEFAULT_GAP_RATIO if max_gap_ratio is None else max_gap_ratio
+    """Group each page's regions into translation units; returns the units created.
+
+    The default is **one unit per region** (``max_gap_ratio`` 0): each bubble is translated and
+    rendered on its own, so its translation lands in its own box rather than overflowing a merged
+    union box. Pass ``max_gap_ratio > 0`` (e.g. :data:`DEFAULT_GAP_RATIO`) to chain close, same-type
+    regions — useful for a single utterance split across stacked bubbles. Cross-bubble *context* for
+    translation is layered in separately via the translation context bundle, not by merging.
+    """
+    ratio = 0.0 if max_gap_ratio is None else max_gap_ratio
     created: list[TranslationUnit] = []
     for page in store.db.list(Page, order_by="idx"):
         regions = store.db.list(Region, where=("page_id", page.id))

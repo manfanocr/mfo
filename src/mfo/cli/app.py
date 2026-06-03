@@ -464,14 +464,15 @@ def group(
         float,
         typer.Option(
             "--max-gap",
-            help="Chain regions whose edge gap is within this fraction of their mean height.",
+            help="Chain same-type regions within this fraction of their mean height into one unit. "
+            f"0 (default) = one unit per bubble; try {DEFAULT_GAP_RATIO} to merge stacked bubbles.",
         ),
-    ] = DEFAULT_GAP_RATIO,
+    ] = 0.0,
     force: Annotated[
         bool, typer.Option("--force", help="Recompute even if current grouping is cached.")
     ] = False,
 ) -> None:
-    """Group ordered regions into conversation chains / translation units (offline — FR-19)."""
+    """Group ordered regions into units (offline; one unit per bubble by default — FR-19)."""
     with _open_store(path) as store:
         save_group_config(store, max_gap_ratio)
         units = group_into_units(store, max_gap_ratio=max_gap_ratio, force=force)
