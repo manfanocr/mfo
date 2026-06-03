@@ -358,7 +358,7 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
   folder or archive; `ImportStage` replays archive imports under `mfo run` (cache extract dir +
   size/mtime in `inputs_hash`). USER_GUIDE + CHANGELOG. See CHANGELOG.
 
-### Batch 8.3 — Formal plugin system (entry-point discovery)
+### Batch 8.3 — Formal plugin system (entry-point discovery) ✅ *(landed 2026-06-04)*
 - **Scope:** Promote the per-layer `_FACTORIES` registries (detect/OCR/translate/assist/render) to a
   documented extension API discoverable via Python **entry points** (`mfo.detectors`, `mfo.ocr`,
   `mfo.translators`, `mfo.assistants`, `mfo.renderers`), so a third-party package registers an
@@ -367,6 +367,12 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
 - **Satisfies:** NFR-17, NFR-19, SG-9; §14.3.
 - **DoD:** A sample out-of-tree package registers a detector via entry points and `mfo detect
   --detector <it>` finds and runs it; offline built-ins still resolve with no plugins installed.
+- **Shipped:** `mfo.core.plugins` (`discover_plugins`, `resolve_factory`, the five group-name
+  constants); `get_detector`/`get_ocr_engine`/`get_translator`/`get_assistant` resolve built-ins
+  first then their entry-point group (built-ins win and can't be shadowed; a broken plugin is
+  skipped with a warning, never fatal — NFR-9). `mfo.renderers` group reserved (render isn't
+  adapter-pluggable yet). `docs/PLUGINS.md` contributor guide + ARCHITECTURE/README pointers. See
+  CHANGELOG.
 
 ### Batch 8.4 — Panel-aware context (SG-1)
 - **Scope:** Use the landed panel detection (3.3) to scope the translation context window to the
@@ -448,7 +454,7 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
 - [x] M5 Render & Export
 - [x] M6 Review Editor *(MVP complete — M0–M6 satisfy the DoD §21)*
 - [x] M7 AI Refinement *(7.1 assist adapter, 7.2 modes, 7.3 confidence-driven review)*
-- [ ] M8 Hardening & Stretch *(planned into batches 8.0–8.11; 8.0 fused detect+recognize, 8.1 parallel processing, 8.2 archive import landed)*
+- [ ] M8 Hardening & Stretch *(planned into batches 8.0–8.11; 8.0 fused detect+recognize, 8.1 parallel processing, 8.2 archive import, 8.3 plugin system landed)*
 
 When a batch lands: tick it, and append a dated entry to [CHANGELOG.md](CHANGELOG.md) with the
 spec IDs it satisfied.

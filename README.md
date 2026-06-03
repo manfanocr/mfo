@@ -94,6 +94,7 @@ mfo export ./my-volume --out ./out
 | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Choosing detectors, OCR engines, and translators (incl. DeepL/API setup) |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layer/module design and adapter contracts |
 | [docs/DATA_MODEL.md](docs/DATA_MODEL.md) | Entities, persistence, project layout |
+| [docs/PLUGINS.md](docs/PLUGINS.md) | Registering third-party adapters via entry points |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to build, test, and contribute |
 | [CHANGELOG.md](CHANGELOG.md) | Landed batches and notable changes |
 | [CLAUDE.md](CLAUDE.md) | Guidance for AI agents working in this repo |

@@ -84,6 +84,13 @@ the core path offline (I-7/I-8) while allowing cloud/GPU opt-ins (NFR-22/24). Pl
 config → registry → resolve("ocr", "manga-ocr") → OCREngine instance
 ```
 
+Resolution is centralized in `core.plugins.resolve_factory`: each layer keeps a built-in
+`_FACTORIES` registry, and the `get_*` resolvers consult those built-ins first, then **entry-point
+plugins** (groups `mfo.detectors` / `mfo.ocr` / `mfo.translators` / `mfo.assistants` /
+`mfo.renderers`). Built-ins win, so the offline defaults can't be shadowed; a broken plugin is
+skipped with a warning, never fatally (NFR-9). Third-party adapters register without editing mfo —
+see [PLUGINS.md](PLUGINS.md).
+
 ## Data flow (one volume)
 
 ```

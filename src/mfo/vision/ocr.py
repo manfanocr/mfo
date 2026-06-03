@@ -24,6 +24,7 @@ from numpy.typing import NDArray
 from PIL import Image
 
 from mfo.core.geometry import BBox
+from mfo.core.plugins import OCR_GROUP, resolve_factory
 from mfo.vision._paddle import _prefer_paddle_cpu_runtime
 
 Uint8Array = NDArray[np.uint8]
@@ -180,13 +181,10 @@ def get_ocr_engine(name: str = "manga-ocr", *, lang: str | None = None) -> OCREn
     """Resolve an OCR engine by config name (NFR-17). Raises ``ValueError`` if unknown.
 
     ``lang`` (the project's source language) is forwarded to engines that need it (e.g. PaddleOCR);
-    Japanese-only manga-ocr ignores it.
+    Japanese-only manga-ocr ignores it. Names resolve from the built-ins first, then ``mfo.ocr``
+    entry-point plugins (NFR-17).
     """
-    try:
-        factory = _FACTORIES[name]
-    except KeyError:
-        known = ", ".join(sorted(_FACTORIES))
-        raise ValueError(f"unknown OCR engine {name!r}; available: {known}") from None
+    factory = resolve_factory(name, _FACTORIES, OCR_GROUP, kind="OCR engine")
     return factory(lang=lang)
 
 

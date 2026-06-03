@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from mfo.core.enums import TranslationStyle
+from mfo.core.plugins import ASSISTANT_GROUP, resolve_factory
 from mfo.language.translate import (
     _STYLE_GUIDANCE,
     ApiTransport,
@@ -288,10 +289,8 @@ _FACTORIES = {"llm": ai_assistant}
 
 
 def get_assistant(name: str = "llm") -> AiAssistant:
-    """Resolve an AI assistant by config name (NFR-17). Raises ``ValueError`` if unknown."""
-    try:
-        factory = _FACTORIES[name]
-    except KeyError:
-        known = ", ".join(sorted(_FACTORIES))
-        raise ValueError(f"unknown AI assistant {name!r}; available: {known}") from None
-    return factory()
+    """Resolve an AI assistant by config name (NFR-17). Raises ``ValueError`` if unknown.
+
+    Names resolve from the built-ins first, then ``mfo.assistants`` entry-point plugins.
+    """
+    return resolve_factory(name, _FACTORIES, ASSISTANT_GROUP, kind="AI assistant")()

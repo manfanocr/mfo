@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from mfo.core.enums import TranslationStyle
+from mfo.core.plugins import TRANSLATOR_GROUP, resolve_factory
 
 
 @dataclass(frozen=True)
@@ -358,10 +359,8 @@ _FACTORIES = {"argos": argos_translator, "api": api_translator, "deepl": deepl_t
 
 
 def get_translator(name: str = "argos") -> Translator:
-    """Resolve a translator by config name (NFR-17). Raises ``ValueError`` if unknown."""
-    try:
-        factory = _FACTORIES[name]
-    except KeyError:
-        known = ", ".join(sorted(_FACTORIES))
-        raise ValueError(f"unknown translator {name!r}; available: {known}") from None
-    return factory()
+    """Resolve a translator by config name (NFR-17). Raises ``ValueError`` if unknown.
+
+    Names resolve from the built-ins first, then ``mfo.translators`` entry-point plugins.
+    """
+    return resolve_factory(name, _FACTORIES, TRANSLATOR_GROUP, kind="translator")()

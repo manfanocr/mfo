@@ -27,6 +27,7 @@ from PIL import Image
 
 from mfo.core.enums import RegionStatus, RegionType
 from mfo.core.geometry import BBox
+from mfo.core.plugins import DETECTOR_GROUP, resolve_factory
 from mfo.vision._paddle import _prefer_paddle_cpu_runtime
 
 Uint8Array = NDArray[np.uint8]
@@ -791,12 +792,9 @@ def get_detector(
     ``lang`` (the project's source language) is forwarded to detectors that recognize text (the
     fused ``paddle-rec``); detection-only detectors ignore it. When ``merge_overlap`` (the default)
     the detector is wrapped so overlapping output boxes are merged into one region per bubble.
+    Names resolve from the built-ins first, then ``mfo.detectors`` entry-point plugins (NFR-17).
     """
-    try:
-        factory = _FACTORIES[name]
-    except KeyError:
-        known = ", ".join(sorted(_FACTORIES))
-        raise ValueError(f"unknown detector {name!r}; available: {known}") from None
+    factory = resolve_factory(name, _FACTORIES, DETECTOR_GROUP, kind="detector")
     detector = factory(lang=lang)
     if merge_overlap:
         detector = MergingDetector(detector, overlap_frac=overlap_frac)

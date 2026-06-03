@@ -10,6 +10,22 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 
 ### M8 — Hardening & Stretch
 
+#### Added — Batch 8.3: Formal plugin system (entry-point discovery) (2026-06-04)
+- **Third-party adapters register via Python entry points — no fork required.** New
+  `mfo.core.plugins` centralizes adapter resolution: `discover_plugins(group)` loads entry points
+  and `resolve_factory(name, builtins, group, kind=...)` resolves a name against the built-in
+  `_FACTORIES` **first**, then the layer's entry-point group. `get_detector`, `get_ocr_engine`,
+  `get_translator`, and `get_assistant` now route through it, so a package can publish an adapter
+  under `mfo.detectors` / `mfo.ocr` / `mfo.translators` / `mfo.assistants` and `mfo … --detector`
+  (etc.) finds it. (`mfo.renderers` is reserved; render isn't adapter-pluggable yet.)
+- **Built-ins win and the core path stays unbreakable.** A built-in name can never be shadowed by an
+  installed plugin (offline defaults always resolve — I-7/I-8), and a plugin whose entry point fails
+  to load is skipped with a `UserWarning` rather than crashing resolution (NFR-9). Unknown-name
+  errors list both built-ins and discovered plugins.
+- **Docs:** new `docs/PLUGINS.md` contributor guide (group names, factory signatures, a worked
+  detector example) linked from `README.md`; `docs/ARCHITECTURE.md` adapter section updated.
+  (NFR-17, NFR-19, SG-9; §14.3)
+
 #### Added — Batch 8.2: Archive import (CBZ/ZIP) (2026-06-03)
 - **`mfo import` reads `.cbz`/`.zip` archives, not just folders.** A CBZ is just a ZIP of images, so
   `mfo.vision.ingest` gained `is_archive`/`ARCHIVE_SUFFIXES`/`extract_archive` and `discover_images`
