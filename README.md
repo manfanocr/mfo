@@ -91,6 +91,7 @@ mfo export ./my-volume --out ./out
 |-----|---------|
 | [mfo_design_notes_spec.md](mfo_design_notes_spec.md) | Source specification (goals, FRs, NFRs, invariants) |
 | [PLAN.md](PLAN.md) | Milestones, batches, and execution roadmap |
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Choosing detectors, OCR engines, and translators (incl. DeepL/API setup) |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layer/module design and adapter contracts |
 | [docs/DATA_MODEL.md](docs/DATA_MODEL.md) | Entities, persistence, project layout |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to build, test, and contribute |

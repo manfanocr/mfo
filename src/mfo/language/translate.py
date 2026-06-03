@@ -255,7 +255,93 @@ def api_translator() -> Translator:
     )
 
 
-_FACTORIES = {"argos": argos_translator, "api": api_translator}
+# --- Opt-in DeepL adapter (NFR-24/25, §14.3) -----------------------------------------------------
+#
+# DeepL is a dedicated MT provider (not OpenAI-compatible), so it gets its own adapter rather than
+# riding the `api` one. Like `api` it is **never the default**, configured entirely from environment
+# variables (nothing secret persisted), sends only the unit's text (NFR-25), and goes through the
+# same injectable transport so it is unit-testable offline and adds no hard dependency.
+
+#: DeepL needs language codes like ``JA`` / ``EN-US``; map the common ones and upper-case the rest.
+_DEEPL_LANG = {"ja": "JA", "zh": "ZH", "en": "EN-US", "ko": "KO", "fr": "FR", "de": "DE"}
+
+#: DeepL free keys end in ``:fx`` and use the ``api-free`` host; the env var can override either.
+_DEEPL_FREE_URL = "https://api-free.deepl.com/v2/translate"
+
+
+@dataclass(frozen=True)
+class DeepLTranslatorConfig:
+    """Where and how the DeepL adapter calls its backend (NFR-24/25).
+
+    Populated from environment variables by :func:`deepl_translator`, never from the project file.
+    ``api_key`` may be empty at construction; the adapter raises only when a translation is
+    attempted (mirroring the other adapters' lazy dependency check).
+    """
+
+    url: str = _DEEPL_FREE_URL
+    api_key: str = ""
+    timeout: float = 60.0
+
+
+def _deepl_lang(code: str) -> str:
+    return _DEEPL_LANG.get(code.lower(), code.upper())
+
+
+class DeepLTranslator:
+    """Opt-in translator over DeepL's REST API (NFR-24/25; never default).
+
+    Sends only the unit's text (not its image, NFR-25). The context bundle is accepted but unused —
+    DeepL has no slot for surrounding dialogue; the LLM ``api`` adapter is the context-aware path.
+    """
+
+    name = "deepl"
+    version = "1"
+
+    def __init__(
+        self, config: DeepLTranslatorConfig, *, transport: ApiTransport | None = None
+    ) -> None:
+        self._config = config
+        self._transport = transport or _http_post_json
+
+    def translate(self, request: TranslationRequest) -> TranslationResult:
+        if not request.source.strip():
+            # Nothing to translate — stay cheap and make no network call (NFR-24).
+            return TranslationResult(text="", confidence=None)
+        if not self._config.api_key:
+            raise TranslatorDependencyError(
+                "no API key for the 'deepl' translator; set MFO_DEEPL_API_KEY (and optionally "
+                "MFO_DEEPL_API_URL for the pro endpoint) to enable it"
+            )
+        payload: dict[str, Any] = {
+            "text": [request.source],
+            "source_lang": _deepl_lang(request.source_lang),
+            "target_lang": _deepl_lang(request.target_lang),
+        }
+        headers = {"Authorization": f"DeepL-Auth-Key {self._config.api_key}"}
+        data = self._transport(self._config.url, payload, headers, self._config.timeout)
+        return TranslationResult(text=_extract_deepl_text(data), confidence=None)
+
+
+def _extract_deepl_text(data: dict[str, Any]) -> str:
+    """Pull the translated text out of a DeepL ``/v2/translate`` response."""
+    try:
+        return str(data["translations"][0]["text"]).strip()
+    except (KeyError, IndexError, TypeError) as exc:
+        raise TranslatorDependencyError(f"unexpected DeepL API response shape: {data!r}") from exc
+
+
+def deepl_translator() -> Translator:
+    """Build the DeepL adapter from environment variables (nothing read from the project file)."""
+    return DeepLTranslator(
+        DeepLTranslatorConfig(
+            url=os.environ.get("MFO_DEEPL_API_URL", _DEEPL_FREE_URL),
+            api_key=os.environ.get("MFO_DEEPL_API_KEY", ""),
+            timeout=float(os.environ.get("MFO_DEEPL_TIMEOUT", DeepLTranslatorConfig.timeout)),
+        )
+    )
+
+
+_FACTORIES = {"argos": argos_translator, "api": api_translator, "deepl": deepl_translator}
 
 
 def get_translator(name: str = "argos") -> Translator:

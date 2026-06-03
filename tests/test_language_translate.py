@@ -16,9 +16,12 @@ from mfo.language import (
     ApiTranslator,
     ApiTranslatorConfig,
     ArgosTranslator,
+    DeepLTranslator,
+    DeepLTranslatorConfig,
     TranslationRequest,
     TranslatorDependencyError,
     api_translator,
+    deepl_translator,
     get_translator,
 )
 
@@ -39,10 +42,11 @@ def _request(source: str = "こんにちは", **context: Any) -> TranslationRequ
 def test_get_translator_resolves_known_names() -> None:
     assert get_translator("argos").name == "argos"
     assert get_translator("api").name == "api"
+    assert get_translator("deepl").name == "deepl"
 
 
 def test_get_translator_unknown_lists_available() -> None:
-    with pytest.raises(ValueError, match="unknown translator 'nope'.*api, argos"):
+    with pytest.raises(ValueError, match="unknown translator 'nope'.*api, argos, deepl"):
         get_translator("nope")
 
 
@@ -132,6 +136,55 @@ def test_api_version_folds_model_for_cache_keys() -> None:
     b = ApiTranslator(ApiTranslatorConfig(model="m2", api_key="k"))
     assert a.version != b.version
     assert a.version == "1:m1"
+
+
+# --- DeepL adapter: opt-in, no network unless used, request shaping ------------------------------
+
+
+def test_deepl_empty_source_makes_no_call() -> None:
+    adapter = DeepLTranslator(DeepLTranslatorConfig(api_key="k"), transport=_failing_transport)
+    assert adapter.translate(_request(source="  ")).text == ""
+
+
+def test_deepl_without_key_raises_before_calling() -> None:
+    adapter = DeepLTranslator(DeepLTranslatorConfig(api_key=""), transport=_failing_transport)
+    with pytest.raises(TranslatorDependencyError, match="MFO_DEEPL_API_KEY"):
+        adapter.translate(_request())
+
+
+def test_deepl_builds_request_and_parses_response() -> None:
+    captured: dict[str, Any] = {}
+
+    def transport(
+        url: str, payload: dict[str, Any], headers: dict[str, str], timeout: float
+    ) -> dict[str, Any]:
+        captured.update(url=url, payload=payload, headers=headers)
+        return {"translations": [{"text": "  Hello  "}]}
+
+    config = DeepLTranslatorConfig(url="https://api-free.deepl.com/v2/translate", api_key="secret")
+    adapter = DeepLTranslator(config, transport=transport)
+    result = adapter.translate(_request())
+
+    assert result.text == "Hello"  # trimmed
+    assert captured["url"] == "https://api-free.deepl.com/v2/translate"
+    assert captured["headers"]["Authorization"] == "DeepL-Auth-Key secret"
+    assert captured["payload"]["text"] == ["こんにちは"]  # only the line is sent (NFR-25)
+    assert captured["payload"]["source_lang"] == "JA"  # mfo code mapped to DeepL's
+    assert captured["payload"]["target_lang"] == "EN-US"
+
+
+def test_deepl_malformed_response_raises() -> None:
+    adapter = DeepLTranslator(DeepLTranslatorConfig(api_key="k"), transport=lambda *_: {"x": 1})
+    with pytest.raises(TranslatorDependencyError, match="unexpected DeepL API response"):
+        adapter.translate(_request())
+
+
+def test_deepl_translator_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MFO_DEEPL_API_KEY", "envkey")
+    monkeypatch.setenv("MFO_DEEPL_API_URL", "https://api.deepl.com/v2/translate")
+    adapter = deepl_translator()
+    assert isinstance(adapter, DeepLTranslator)
+    assert adapter._config.url == "https://api.deepl.com/v2/translate"
 
 
 # --- env-driven construction; nothing secret is persisted (NFR-25) -------------------------------

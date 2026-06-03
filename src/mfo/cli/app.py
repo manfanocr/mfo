@@ -318,7 +318,8 @@ def translate(
         str,
         typer.Option(
             "--translator",
-            help="Translator: 'argos' (offline default) or 'api' (opt-in cloud; MFO_API_* env).",
+            help="Translator: 'argos' (offline default), 'api' (OpenAI-compatible; MFO_API_* env), "
+            "or 'deepl' (MFO_DEEPL_API_KEY).",
         ),
     ] = "argos",
     style: Annotated[
