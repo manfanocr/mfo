@@ -209,6 +209,23 @@ def test_detect_finds_regions_and_status_reports(tmp_path: Path) -> None:
     assert "1 regions" in status.stdout
 
 
+def test_detect_reports_cache_reuse_on_rerun(tmp_path: Path) -> None:
+    # A second run with the same detector skips unchanged pages (NFR-8): 0 *new* regions, but the
+    # message must make clear the project still holds its regions (not mistaken for a failure).
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    source = tmp_path / "src"
+    source.mkdir()
+    _make_page_with_text(source / "p1.png")
+    runner.invoke(app, ["import", str(target), str(source)])
+    runner.invoke(app, ["detect", str(target)])
+
+    rerun = runner.invoke(app, ["detect", str(target)])
+    assert rerun.exit_code == 0, rerun.stdout
+    assert "Detected 0 new region(s); 1 total in project" in rerun.stdout
+    assert "--force" in rerun.stdout
+
+
 def test_detect_unknown_detector_exits_1(tmp_path: Path) -> None:
     target = tmp_path / "vol"
     runner.invoke(app, ["init", str(target)])

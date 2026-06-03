@@ -278,7 +278,19 @@ def detect(
             signature=signature,
             force=force,
         )
-    typer.secho(f"Detected {len(regions)} region(s).", fg=typer.colors.GREEN)
+        total = len(store.db.list(Region))
+    new = len(regions)
+    if new == total:
+        typer.secho(f"Detected {new} region(s).", fg=typer.colors.GREEN)
+    else:
+        # Pages whose source + detector are unchanged are skipped (NFR-8), so `new` can be 0 even
+        # though the project already holds regions. Report both so a cached run isn't mistaken for
+        # a failed one.
+        typer.secho(
+            f"Detected {new} new region(s); {total} total in project "
+            f"({total - new} reused from cache — pass --force to re-detect).",
+            fg=typer.colors.GREEN,
+        )
 
 
 @app.command()
