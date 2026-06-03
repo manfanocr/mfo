@@ -102,11 +102,19 @@ mfo ocr <proj> --engine paddleocr    # PaddleOCR; uses the project's source lang
 Both load their model lazily on first use and report a clear, actionable error if the optional
 dependency is missing. `paddleocr` picks its model from the project's `--source` language.
 
-> **PaddleOCR needs the `paddlepaddle` backend.** The `mfo[ocr-paddle]` extra targets PaddleOCR 3.x
-> and pulls in `paddlepaddle`, which only ships wheels for some Python versions (currently 3.9–3.12).
-> Installing `paddleocr` *without* a working `paddlepaddle` lets the engine import but not run; mfo
-> reports this as a dependency error (OCR) or falls back to the baseline detector (detection) rather
-> than crashing. If you hit this, install into a supported Python or `pip install paddlepaddle`.
+> **PaddleOCR needs the `paddlepaddle` backend, and that backend is Python-version-picky.**
+> The `mfo[ocr-paddle]` extra targets PaddleOCR 3.x and pulls in `paddlepaddle`. PaddlePaddle ships
+> wheels only for **CPython 3.8–3.13** (no 3.14+ build exists yet), distributed from its own index
+> rather than PyPI. Installing `paddleocr` *without* a working `paddlepaddle` lets the engine import
+> but not run; mfo reports this as a dependency error (OCR) or falls back to the baseline detector
+> (detection) rather than crashing. To get a runnable stack, use a supported Python and install the
+> backend from PaddlePaddle's index:
+>
+> ```bash
+> # in a Python 3.8–3.13 environment
+> pip install paddlepaddle -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+> pip install -e '.[ocr-paddle]'
+> ```
 
 ---
 
