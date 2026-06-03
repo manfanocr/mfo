@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from mfo.ui.review import (
     NotFoundError,
+    create_region,
+    delete_region,
     edit_translation,
     merge_regions,
     move_region,
@@ -39,6 +41,8 @@ __all__ = [
     "reorder_regions",
     "split_region",
     "merge_regions",
+    "create_region",
+    "delete_region",
     "review_queue",
     "rerender_page",
     "page_render_path",

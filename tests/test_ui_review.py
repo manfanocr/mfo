@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +15,8 @@ from mfo.core.geometry import BBox
 from mfo.storage import ProjectStore, import_pages, list_edits, translate_units
 from mfo.ui import (
     NotFoundError,
+    create_region,
+    delete_region,
     edit_translation,
     merge_regions,
     move_region,
@@ -37,6 +39,15 @@ from mfo.vision.ingest import discover_images
 class _Result:
     text: str
     confidence: float | None = None
+
+
+@dataclass(frozen=True)
+class _Recognized:
+    """An OCR result for the create-region tests (the recognize callable's return shape)."""
+
+    text: str
+    confidence: float | None = None
+    alternatives: list[str] = field(default_factory=list)
 
 
 def _echo(source: str, context: dict[str, object]) -> _Result:
@@ -345,6 +356,78 @@ def test_merge_regions_needs_two(tmp_path: Path) -> None:
         a, _ = _regions_in_order(store)
         with pytest.raises(ValueError):
             merge_regions(store, [a.id])
+
+
+def test_delete_region_drops_ocr_and_detaches_from_unit(tmp_path: Path) -> None:
+    with _project_with_two_regions(tmp_path / "proj", tmp_path / "src") as store:
+        a, b = _regions_in_order(store)
+        view = delete_region(store, a.id)
+
+        assert len(view["regions"]) == 1
+        assert store.db.get(Region, a.id) is None
+        assert store.db.list(OCRSpan, where=("region_id", a.id)) == []
+        unit = store.db.list(TranslationUnit)[0]
+        assert unit.ordered_region_ids == [b.id]  # detached from the deleted region
+        # Reading order stays contiguous from 0.
+        assert store.db.get(Region, b.id).reading_order_index == 0  # type: ignore[union-attr]
+
+
+def test_delete_last_region_removes_empty_unit(tmp_path: Path) -> None:
+    with _project_with_unit(tmp_path / "proj", tmp_path / "src") as store:
+        region = store.db.list(Region)[0]
+        delete_region(store, region.id)
+        assert store.db.list(Region) == []
+        assert store.db.list(TranslationUnit) == []  # the now-empty unit is gone
+
+
+def test_create_region_ocrs_and_translates(tmp_path: Path) -> None:
+    with _project_with_unit(tmp_path / "proj", tmp_path / "src") as store:
+        page = store.db.list(Page)[0]
+
+        def recognize(path: Path, bbox: BBox) -> _Recognized:
+            return _Recognized(text="やあ", confidence=0.7)
+
+        before_regions = len(store.db.list(Region))
+        view = create_region(
+            store,
+            page.id,
+            x=5,
+            y=5,
+            width=30,
+            height=20,
+            recognize=recognize,
+            translate=_echo,
+            target_lang="en",
+        )
+
+        assert len(view["regions"]) == before_regions + 1
+        new_region = max(store.db.list(Region), key=lambda r: r.reading_order_index or 0)
+        assert (
+            new_region.status is RegionStatus.MANUAL
+        )  # user-made → automation won't clobber (I-3)
+        span = store.db.list(OCRSpan, where=("region_id", new_region.id))[0]
+        assert span.text == "やあ"
+        unit = next(
+            u for u in store.db.list(TranslationUnit) if new_region.id in u.ordered_region_ids
+        )
+        assert selected_text(unit) == "EN[やあ]"  # OCR'd then translated immediately
+
+
+def test_create_region_rejects_zero_size(tmp_path: Path) -> None:
+    with _project_with_unit(tmp_path / "proj", tmp_path / "src") as store:
+        page = store.db.list(Page)[0]
+        with pytest.raises(ValueError):
+            create_region(
+                store,
+                page.id,
+                x=5,
+                y=5,
+                width=0,
+                height=20,
+                recognize=lambda path, bbox: _Result(text=""),
+                translate=_echo,
+                target_lang="en",
+            )
 
 
 # -- review queue (§13.4) -----------------------------------------------------------------

@@ -20,6 +20,8 @@ from typing import Any
 from mfo.storage.project import ProjectStore
 from mfo.ui.review import (
     NotFoundError,
+    create_region,
+    delete_region,
     edit_translation,
     merge_regions,
     move_region,
@@ -37,7 +39,7 @@ from mfo.ui.review import (
 )
 
 try:
-    from fastapi import FastAPI, Request
+    from fastapi import FastAPI, HTTPException, Request
     from fastapi.responses import FileResponse, JSONResponse
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel
@@ -111,6 +113,55 @@ class RegionMerge(BaseModel):
     region_ids: list[str]
 
 
+class RegionCreate(BaseModel):
+    """Body for adding a user-drawn region, then OCR-ing and translating it (FR-38; §13.3)."""
+
+    x: float
+    y: float
+    width: float
+    height: float
+    type: str = "bubble"
+
+
+# The OCR/translate engines a created region needs. Wired lazily from the project config so this
+# module never pulls in the heavy vision/language stacks at import (I-7/I-8); split out as a seam so
+# the create-region route can be tested with fakes instead of real engines.
+RegionEngines = tuple[
+    Any, Any, str, Any, Any
+]  # (recognize, translate, target_lang, style, glossary)
+
+
+def _region_engines(store: ProjectStore) -> RegionEngines:
+    from mfo.cli.stages import load_glossary
+    from mfo.core.enums import TranslationStyle
+    from mfo.language.translate import TranslationRequest, get_translator
+    from mfo.vision.ocr import get_ocr_engine, recognize_file
+
+    project = store.project
+    ocr_cfg = project.config.get("ocr", {})
+    translate_cfg = project.config.get("translate", {})
+    ocr_engine = get_ocr_engine(ocr_cfg.get("engine", "manga-ocr"))
+    translator = get_translator(translate_cfg.get("translator", "argos"))
+    style = TranslationStyle(translate_cfg.get("style", TranslationStyle.BALANCED.value))
+    source_lang, target_lang = project.source_lang, project.target_lang
+
+    def recognize(path: Any, bbox: Any) -> Any:
+        return recognize_file(path, bbox, ocr_engine)
+
+    def translate(source: str, context: dict[str, Any]) -> Any:
+        return translator.translate(
+            TranslationRequest(
+                source=source,
+                source_lang=source_lang,
+                target_lang=target_lang,
+                context=context,
+                style=style,
+            )
+        )
+
+    return recognize, translate, target_lang, style, load_glossary(store)
+
+
 def create_app(store: ProjectStore) -> FastAPI:
     """Build the review API bound to an open project ``store``.
 
@@ -175,6 +226,40 @@ def create_app(store: ProjectStore) -> FastAPI:
     @app.post("/api/regions/merge")
     def post_regions_merge(body: RegionMerge) -> dict[str, Any]:
         return merge_regions(store, body.region_ids)
+
+    @app.delete("/api/regions/{region_id}")
+    def delete_region_route(region_id: str) -> dict[str, Any]:
+        return delete_region(store, region_id)
+
+    @app.post("/api/pages/{page_id}/regions")
+    def post_create_region(page_id: str, body: RegionCreate) -> dict[str, Any]:
+        from mfo.core.enums import RegionType
+        from mfo.language.translate import TranslatorDependencyError
+        from mfo.vision.ocr import OcrDependencyError
+
+        try:
+            region_type = RegionType(body.type)
+        except ValueError:
+            region_type = RegionType.BUBBLE
+        recognize, translate, target_lang, style, glossary = _region_engines(store)
+        try:
+            return create_region(
+                store,
+                page_id,
+                x=body.x,
+                y=body.y,
+                width=body.width,
+                height=body.height,
+                recognize=recognize,
+                translate=translate,
+                target_lang=target_lang,
+                region_type=region_type,
+                style=style,
+                glossary=glossary,
+            )
+        except (OcrDependencyError, TranslatorDependencyError) as exc:
+            # The offline core works without these engines; surface a clear, actionable 503.
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.put("/api/pages/{page_id}/order")
     def put_page_order(page_id: str, body: RegionOrder) -> dict[str, Any]:

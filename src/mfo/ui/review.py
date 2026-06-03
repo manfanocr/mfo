@@ -20,6 +20,7 @@ server; :mod:`mfo.ui.server` is a thin FastAPI shell over it.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -33,8 +34,15 @@ from mfo.core import (
     selected_text,
 )
 from mfo.core.confidence import DEFAULT_THRESHOLD, aggregate_confidence, is_low_confidence
-from mfo.core.enums import CandidateKind, EditAction, RegionStatus
+from mfo.core.context import DEFAULT_NEIGHBOR_WINDOW, build_context
+from mfo.core.enums import CandidateKind, EditAction, RegionStatus, RegionType, TranslationStyle
 from mfo.core.geometry import BBox
+from mfo.core.glossary import (
+    GlossaryEntry,
+    applicable_entries,
+    apply_glossary,
+    glossary_terms,
+)
 from mfo.render import (
     CompositeArtifact,
     MaskConfig,
@@ -45,8 +53,10 @@ from mfo.render import (
 )
 from mfo.storage import RENDER_KIND, composite_pages, mask_pages
 from mfo.storage.edits import list_edits, record_edit
+from mfo.storage.ocr import Recognize
 from mfo.storage.project import ProjectStore
 from mfo.storage.render import PagePlacement
+from mfo.storage.translate import Translate
 
 # A reading-order index sentinel that sorts unordered regions last, mirroring page_view's ordering.
 _ORDER_LAST = 1 << 30
@@ -445,6 +455,97 @@ def merge_regions(store: ProjectStore, region_ids: list[str]) -> dict[str, Any]:
             store.db.save(unit.model_copy(update={"ordered_region_ids": new_ids}))
 
     _reindex(store, _page_regions_in_order(store, page_id))
+    return page_view(store, page_id)
+
+
+def delete_region(store: ProjectStore, region_id: str) -> dict[str, Any]:
+    """Delete a region the detector got wrong (FR-38/39); drops its OCR and detaches it from units.
+
+    A unit left with no regions is removed too. The page's reading order is left contiguous so a
+    later re-render/export stays deterministic.
+    """
+    region = _require_region(store, region_id)
+    page_id = region.page_id
+    store.db.delete(OCRSpan, where=("region_id", region.id))
+    for unit in store.db.list(TranslationUnit, where=("page_id", page_id)):
+        if region.id not in unit.ordered_region_ids:
+            continue
+        remaining = [rid for rid in unit.ordered_region_ids if rid != region.id]
+        if remaining:
+            store.db.save(unit.model_copy(update={"ordered_region_ids": remaining}))
+        else:
+            store.db.delete(TranslationUnit, where=("id", unit.id))
+    store.db.delete(Region, where=("id", region.id))
+    _reindex(store, _page_regions_in_order(store, page_id))
+    return page_view(store, page_id)
+
+
+def create_region(
+    store: ProjectStore,
+    page_id: str,
+    *,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    recognize: Recognize,
+    translate: Translate,
+    target_lang: str,
+    region_type: RegionType = RegionType.BUBBLE,
+    style: TranslationStyle = TranslationStyle.BALANCED,
+    glossary: Sequence[GlossaryEntry] = (),
+    window: int = DEFAULT_NEIGHBOR_WINDOW,
+) -> dict[str, Any]:
+    """Add a user-drawn region, OCR its crop, and translate it immediately (FR-38; §13.3).
+
+    The recognition and translation callables are injected (the server wires the project's engines),
+    keeping this layer provider-free and unit-testable offline. The region is created ``MANUAL`` so
+    automation never clobbers it (I-3); its OCR and the resulting machine candidate are stored just
+    like the pipeline's, so the new unit is indistinguishable from a detected one downstream (I-2).
+    """
+    page = _require_page(store, page_id)
+    if width <= 0 or height <= 0:
+        raise ValueError("region width and height must be positive")
+    bbox = BBox(x=x, y=y, width=width, height=height)
+    region = Region(page_id=page_id, bbox=bbox, type=region_type, status=RegionStatus.MANUAL)
+    store.db.save(region)
+    _reindex(store, _page_regions_in_order(store, page_id))  # the new box sorts last; pin its index
+
+    result = recognize(store.layout.root / page.image_path, bbox)
+    store.db.save(
+        OCRSpan(
+            region_id=region.id,
+            text=result.text,
+            confidence=result.confidence,
+            alternatives=list(result.alternatives),
+        )
+    )
+
+    source = result.text
+    page_count = len(store.db.list(Page))
+    context = build_context(
+        [source], 0, page_index=page.index, page_count=page_count, window=window
+    )
+    terms = glossary_terms(applicable_entries(source, glossary))
+    if terms:
+        context = {**context, "glossary": terms}
+    translated = translate(source, context)
+    candidate = TranslationCandidate(
+        text=apply_glossary(translated.text, source, glossary),
+        kind=CandidateKind.RAW,
+        confidence=translated.confidence,
+    )
+    store.db.save(
+        TranslationUnit(
+            page_id=page_id,
+            ordered_region_ids=[region.id],
+            source_bundle=source,
+            context_bundle=context,
+            candidates=[candidate],
+            selected_candidate_id=candidate.id,
+            style=style,
+        )
+    )
     return page_view(store, page_id)
 
 

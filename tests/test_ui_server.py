@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -168,6 +169,59 @@ def test_split_then_merge_round_trips(client: tuple[TestClient, ProjectStore]) -
     assert merged.status_code == 200
     assert len(merged.json()["regions"]) == 1
     assert merged.json()["page_id"] == page_id
+
+
+def test_delete_region_route(client: tuple[TestClient, ProjectStore]) -> None:
+    api, store = client
+    region = store.db.list(Region)[0]
+    response = api.delete(f"/api/regions/{region.id}")
+    assert response.status_code == 200
+    assert response.json()["regions"] == []
+    assert store.db.get(Region, region.id) is None
+
+
+def test_create_region_route_runs_ocr_and_translate(
+    client: tuple[TestClient, ProjectStore], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api, store = client
+    page = store.db.list(Page)[0]
+
+    # Inject fake engines so the route is exercised without the heavy OCR/MT stacks.
+    def fake_engines(_store: ProjectStore) -> tuple[object, object, str, object, tuple[()]]:
+        def recognize(path: Path, bbox: BBox) -> SimpleNamespace:
+            return SimpleNamespace(text="やあ", confidence=None, alternatives=[])
+
+        return recognize, _echo, "en", "balanced", ()
+
+    monkeypatch.setattr("mfo.ui.server._region_engines", fake_engines)
+
+    body = {"x": 5, "y": 5, "width": 30, "height": 20, "type": "bubble"}
+    response = api.post(f"/api/pages/{page.id}/regions", json=body)
+    assert response.status_code == 200
+    assert len(response.json()["regions"]) == 2  # original + the created one
+
+
+def test_create_region_route_reports_engine_unavailable(
+    client: tuple[TestClient, ProjectStore], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api, store = client
+    page = store.db.list(Page)[0]
+
+    def engines_with_failing_ocr(
+        _store: ProjectStore,
+    ) -> tuple[object, object, str, object, tuple[()]]:
+        from mfo.vision.ocr import OcrDependencyError
+
+        def recognize(path: Path, bbox: BBox) -> _Result:
+            raise OcrDependencyError("manga-ocr is not installed")
+
+        return recognize, _echo, "en", "balanced", ()
+
+    monkeypatch.setattr("mfo.ui.server._region_engines", engines_with_failing_ocr)
+    body = {"x": 5, "y": 5, "width": 30, "height": 20}
+    response = api.post(f"/api/pages/{page.id}/regions", json=body)
+    assert response.status_code == 503
+    assert "manga-ocr" in response.json()["detail"]
 
 
 def test_put_page_order(client: tuple[TestClient, ProjectStore]) -> None:
