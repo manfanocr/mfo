@@ -384,6 +384,21 @@ def test_translate_unknown_translator_exits_1(tmp_path: Path) -> None:
     assert result.exit_code == 1
 
 
+def test_translate_api_adapter_persists_without_key(tmp_path: Path) -> None:
+    # Selecting the opt-in API adapter (4.4) is config-only: with no units it loads the adapter but
+    # makes no network call and needs no key (NFR-24). Only the name is persisted, never a secret.
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    result = runner.invoke(app, ["translate", str(target), "--translator", "api"])
+    assert result.exit_code == 0, result.stdout
+    with ProjectStore.open(target) as store:
+        config = store.project.config["translate"]
+        assert config["translator"] == "api"
+        assert (
+            "api_key" not in config and "base_url" not in config
+        )  # NFR-25: nothing secret on disk
+
+
 def test_translate_persists_style(tmp_path: Path) -> None:
     target = tmp_path / "vol"
     runner.invoke(app, ["init", str(target)])

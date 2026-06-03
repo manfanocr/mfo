@@ -9,6 +9,29 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 ## [Unreleased]
 
 ### Added
+- **Batch 4.4 — API translation adapter** (M4 Translation — optional, opt-in, post-MVP):
+  - `mfo.language.translate.ApiTranslator`: an opt-in cloud/LLM translator behind the existing `Translator`
+    interface, talking to any OpenAI-compatible chat-completions endpoint. It is **never the default**
+    (NFR-24) and is configured entirely from environment variables (`MFO_API_KEY`, `MFO_API_BASE_URL`,
+    `MFO_API_MODEL`, `MFO_API_TIMEOUT`) so no endpoint or secret is ever written to the project (NFR-25);
+    only the translator *name* is persisted. It sends the unit's text and context bundle — nearby dialogue,
+    page locator, and pinned glossary terms (FR-22, FR-24) — under the requested register (FR-25), and never
+    the source page image (NFR-25). An empty unit short-circuits with no network call, and a missing key
+    raises `TranslatorDependencyError` only at translate time (mirroring the offline adapter's lazy check),
+    so config can be saved before a key is set. Its `version` folds in the model so switching models re-runs
+    the translation cache (NFR-8).
+  - Network I/O lives behind an injectable `ApiTransport` (default: a stdlib-`urllib` JSON POST), so the
+    adapter adds **no hard dependency** and is exercised entirely offline in tests; connection failures and
+    non-JSON/malformed responses surface as a clear `TranslatorDependencyError` (caught by the CLI). Registered
+    as the `"api"` translator, selectable via `mfo translate --translator api` (and reproduced by `mfo run`).
+    The offline Argos default path is byte-for-byte unchanged and makes no network call (I-7/I-8, DoD 4.4).
+  - Tests: registry resolves `argos`/`api` and lists alternatives on an unknown name; offline adapter empty
+    no-op; API adapter makes no call for an empty source or before a key is set; request shaping (URL join,
+    auth header, model, style guidance, glossary, preceding/following context, the line itself) and response
+    parsing/trimming; malformed-response error; model-folded cache id; env-driven construction with nothing
+    secret persisted; and the default transport's POST/JSON glue + network-error wrapping via a fake `urlopen`.
+    CLI: `mfo translate --translator api` persists the name only (no key/endpoint on disk — NFR-25).
+  - Satisfies: FR-21; NFR-17, NFR-24, NFR-25; §14.3.
 - **Batch 3.3 — Panel detection** (M3 Structure — optional, light, post-MVP):
   - `mfo.vision.panels`: a best-effort, dependency-light panel detector (recursive X–Y cut over the page's
     white gutters, using only OpenCV/NumPy — no model download, NFR-21). `detect_panels` recovers frame
@@ -542,7 +565,7 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   is off the MVP-critical path. M4 landed 4.1 (translation adapter + context builder), 4.2 (glossary,
   terminology & style), and 4.3 (traceability & mapping export, MVP-7) — completing M4's MVP scope. The
   optional **batch 4.4 — API translation adapter** (opt-in cloud/LLM translation behind explicit config,
-  never default) remains and is off the MVP-critical path. **M5 (Rendering & Export) is complete** — 5.1
+  never default) has since landed off the MVP-critical path. **M5 (Rendering & Export) is complete** — 5.1
   (text masking / removal — the reversible masked base layer), 5.2 (font fitting & placement — the pure
   typesetting engine), and 5.3 (composite & export pages — typesetting the selected translation onto each
   masked layer and exporting translated pages + mapping/manifest/transcript, MVP-9). **M6 (Review Editor)
@@ -556,8 +579,10 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
   OCR, get context-aware translations, review/edit in place, export, and reopen later with all mappings
   intact. The optional ML detector (batch 2.2 — a lazy, fallback-guarded ONNX detector behind the `detect`
   extra) and optional panel detection (batch 3.3 — best-effort X–Y-cut panel boundaries refining reading
-  order via `mfo order --panels`, cleanly disabled by default) have since landed off the critical path; the
-  one remaining optional batch is 4.4 (API translation adapter).
+  order via `mfo order --panels`, cleanly disabled by default), and the optional API translation adapter
+  (batch 4.4 — opt-in cloud/LLM translation via `mfo translate --translator api`, env-configured and never
+  default) have since landed off the critical path. **All planned optional batches are now complete**; the
+  remaining work is the post-MVP milestones M7 (AI Refinement) and M8 (Hardening & Stretch).
 
 <!--
 Template for a landed batch:

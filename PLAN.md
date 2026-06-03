@@ -212,7 +212,7 @@ plugs into.
 - **Satisfies:** I-2, I-6, FR-26 (data), FR-41/42/43; MVP-7; §21.
 - **DoD:** `mfo export --mapping` emits JSON tracing every output region to its source.
 
-### Batch 4.4 — API translation adapter (optional)
+### Batch 4.4 — API translation adapter (optional) ✅ *(landed — see CHANGELOG)*
 - **Scope:** Opt-in cloud/LLM translation adapter behind explicit config; never default.
 - **Satisfies:** NFR-24/25, §14.3; FR-21.
 - **DoD:** Works when configured; core remains fully offline without it.
@@ -304,7 +304,7 @@ plugs into.
 - [x] M1 Import & Preprocess
 - [x] M2 Vision *(MVP scope: 2.1 detect, 2.3 OCR, 2.4 confidence; 2.2 optional ML detector landed)*
 - [x] M3 Structure *(MVP scope: 3.1 reading order, 3.2 dialogue grouping; 3.3 optional panel detection landed)*
-- [x] M4 Translation *(MVP scope: 4.1 adapter+context, 4.2 glossary/style, 4.3 mapping; 4.4 API adapter is optional)*
+- [x] M4 Translation *(MVP scope: 4.1 adapter+context, 4.2 glossary/style, 4.3 mapping; 4.4 optional API adapter landed)*
 - [x] M5 Render & Export
 - [x] M6 Review Editor *(MVP complete — M0–M6 satisfy the DoD §21)*
 - [ ] M7 AI Refinement

@@ -312,7 +312,13 @@ def ocr(
 @app.command()
 def translate(
     path: Annotated[Path, typer.Argument(help="Project directory.")],
-    translator: Annotated[str, typer.Option("--translator", help="Translator to use.")] = "argos",
+    translator: Annotated[
+        str,
+        typer.Option(
+            "--translator",
+            help="Translator: 'argos' (offline default) or 'api' (opt-in cloud; MFO_API_* env).",
+        ),
+    ] = "argos",
     style: Annotated[
         TranslationStyle, typer.Option("--style", help="Translation register (FR-25).")
     ] = TranslationStyle.BALANCED,
