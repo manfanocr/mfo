@@ -75,6 +75,27 @@ mfo translate <proj> --translator api --style natural
 Point `MFO_API_BASE_URL` at any service that speaks the OpenAI chat-completions format — including
 LLM gateways and proxies that wrap **DeepL or Google Translate** behind an OpenAI-compatible API.
 
+#### Local LLM via Ollama (fully offline, no cloud key)
+
+[Ollama](https://ollama.com) serves an OpenAI-compatible endpoint, so the `api` adapter drives a
+**local** model with no data leaving your machine — a good fit for mfo's offline-first design.
+
+```bash
+ollama pull gemma3:12b                 # or a translation-tuned model, e.g. zongwei/gemma3-translator:4b
+export MFO_API_BASE_URL="http://localhost:11434/v1"
+export MFO_API_MODEL="gemma3:12b"
+export MFO_API_KEY="ollama"            # any non-empty value: Ollama ignores it, but the adapter requires one
+export MFO_API_TIMEOUT="240"           # the first request loads the model into RAM/VRAM — give it room
+mfo translate <proj> --translator api --style natural
+```
+
+Notes:
+- The adapter sends its **own** manga-translation system prompt, which overrides the `SYSTEM` block
+  baked into a custom modelfile (e.g. `gemma3-translator`). Such models still work — they're general
+  instruction models underneath — but their special prompt format is bypassed, so a plain `gemma3`
+  base model performs comparably here.
+- Context (nearby dialogue, glossary, style) is included in the prompt just like any `api` backend.
+
 ### What about "free Google Translate"?
 
 There's no official *free* Google Translate API; the truly free path relies on **unofficial**
