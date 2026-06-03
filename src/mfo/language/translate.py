@@ -82,6 +82,18 @@ class ArgosTranslator:
             raise TranslatorDependencyError(
                 "argostranslate is not installed; install it with:  pip install 'mfo[translate]'"
             ) from exc
+        # Argos dereferences the language without checking it exists, so a missing package surfaces
+        # as a cryptic ``'NoneType' ... get_translation`` AttributeError. Detect it up front and
+        # raise a clear, actionable error instead (I-7).
+        languages = {lang.code: lang for lang in argos.get_installed_languages()}
+        from_lang = languages.get(request.source_lang)
+        to_lang = languages.get(request.target_lang)
+        if from_lang is None or to_lang is None or from_lang.get_translation(to_lang) is None:
+            raise TranslatorDependencyError(
+                f"no offline Argos language package for {request.source_lang!r} -> "
+                f"{request.target_lang!r}; install one, e.g.  "
+                f"argospm install translate-{request.source_lang}_{request.target_lang}"
+            )
         text = str(argos.translate(request.source, request.source_lang, request.target_lang))
         # Argos emits a single best translation without a score.
         return TranslationResult(text=text, confidence=None)

@@ -56,6 +56,17 @@ def test_argos_empty_source_is_offline_noop() -> None:
     assert result.confidence is None
 
 
+def test_argos_missing_language_package_raises_clear_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A missing language package must surface a clear TranslatorDependencyError, not Argos's cryptic
+    # ``'NoneType' object has no attribute 'get_translation'`` AttributeError (I-7).
+    argos = pytest.importorskip("argostranslate.translate")
+    monkeypatch.setattr(argos, "get_installed_languages", list)
+    with pytest.raises(TranslatorDependencyError, match="translate-ja_en"):
+        ArgosTranslator().translate(_request(source="こんにちは"))
+
+
 # --- API adapter: no network unless actually used (NFR-24) ----------------------------------------
 
 
