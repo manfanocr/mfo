@@ -13,7 +13,6 @@ turns these into persisted ``Region`` records linked to their page.
 from __future__ import annotations
 
 import logging
-import os
 import urllib.request
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -25,6 +24,7 @@ import numpy as np
 from numpy.typing import NDArray
 from PIL import Image
 
+from mfo.core.assets import DEFAULT_DETECTOR_MODEL_FILENAME, default_model_dir
 from mfo.core.enums import RegionStatus, RegionType
 from mfo.core.geometry import BBox
 from mfo.core.plugins import DETECTOR_GROUP, resolve_factory
@@ -335,12 +335,6 @@ class MergingDetector:
         return merge_overlapping_regions(self._inner.detect(image), overlap_frac=self._overlap_frac)
 
 
-def default_model_dir() -> Path:
-    """Where ML model weights are cached (overridable via the ``MFO_MODEL_DIR`` env var)."""
-    override = os.environ.get("MFO_MODEL_DIR")
-    return Path(override) if override else Path.home() / ".cache" / "mfo" / "models"
-
-
 @dataclass(frozen=True)
 class MLDetectorConfig:
     """Configuration for the ML detector adapter.
@@ -351,7 +345,7 @@ class MLDetectorConfig:
     """
 
     model_url: str = ""
-    model_filename: str = "comic-text-detector.onnx"
+    model_filename: str = DEFAULT_DETECTOR_MODEL_FILENAME
     model_dir: Path | None = None  # None → default_model_dir()
     input_size: int = 1024
     score_threshold: float = 0.3

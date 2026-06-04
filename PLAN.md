@@ -488,13 +488,23 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
   the SPA. Localhost single-user use is unchanged (no token, no rev sent → no locking). USER_GUIDE +
   DATA_MODEL. See CHANGELOG.
 
-### Batch 8.11 — Packaging, model tooling & sample data
+### Batch 8.11 — Packaging, model tooling & sample data ✅ *(landed 2026-06-04)*
 - **Scope:** Installable distributions (pipx/wheels), a `mfo models` command to download & cache the
   optional models (OCR/detector/translation) with `MFO_MODEL_DIR`, a small bundled **sample dataset**
   and an end-to-end smoke run, and a finalized user guide/README pass.
 - **Satisfies:** NFR-12, NFR-22, NFR-28; §15, §21.
 - **DoD:** A clean machine can `pipx install mfo`, `mfo models pull <name>`, and run the sample
   project end-to-end (import → export) following only the docs.
+- **Shipped:** `mfo.core.assets` — the single catalog of optional models (`ModelAsset`/`CATALOG`)
+  plus the canonical `default_model_dir()` (honouring `MFO_MODEL_DIR`; the ML detector now imports it
+  and the shared filename from here) and an atomic, idempotent, injectable-downloader `pull_asset`.
+  `mfo models path/list/pull` locates, inspects, and fetches downloadable assets (e.g. the ONNX
+  detector) while pointing at the right command for library-managed ones (manga-ocr/paddle/argos).
+  `mfo.sample.create_sample_pages` draws a deterministic synthetic dataset (no binaries committed, no
+  download) and `mfo sample <dir>` writes it + prints the run sequence; an offline smoke test takes it
+  sample → init → import → preprocess → detect → order → group → export. Packaging: an `all` extra for
+  `pipx install 'mfo[all]'` (Paddle stays opt-in). README quick-start + a USER_GUIDE
+  "Installing & provisioning models" section. See CHANGELOG.
 
 ---
 
@@ -508,9 +518,9 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
 - [x] M5 Render & Export
 - [x] M6 Review Editor *(MVP complete — M0–M6 satisfy the DoD §21)*
 - [x] M7 AI Refinement *(7.1 assist adapter, 7.2 modes, 7.3 confidence-driven review)*
-- [ ] M8 Hardening & Stretch *(planned into batches 8.0–8.11; 8.0 fused detect+recognize, 8.1 parallel processing, 8.2 archive import, 8.3 plugin system, 8.4 panel-aware context, 8.5 cross-volume glossary, 8.6 per-series style presets, 8.7 SFX
+- [x] M8 Hardening & Stretch *(batches 8.0–8.11 all landed: 8.0 fused detect+recognize, 8.1 parallel processing, 8.2 archive import, 8.3 plugin system, 8.4 panel-aware context, 8.5 cross-volume glossary, 8.6 per-series style presets, 8.7 SFX
 detection & transliteration, 8.8 bubble-shape-aware wrapping, 8.9 LLM OCR correction, 8.10 LAN &
-collaborative review landed)*
+collaborative review, 8.11 packaging/model tooling/sample data)*
 
 When a batch lands: tick it, and append a dated entry to [CHANGELOG.md](CHANGELOG.md) with the
 spec IDs it satisfied.

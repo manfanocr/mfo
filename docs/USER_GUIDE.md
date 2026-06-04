@@ -472,8 +472,66 @@ it at a URL to download once:
 ```bash
 pip install 'mfo[detect]'
 export MFO_MODEL_DIR="$HOME/.cache/mfo/models"     # optional; this is the default
-# place comic-text-detector.onnx in $MFO_MODEL_DIR (or configure MLDetectorConfig.model_url)
+mfo models pull detector-onnx --url <onnx-export-url>   # drops it where `ml` looks
 mfo detect <proj> --detector ml
 ```
 
 GPU is opt-in (configure the ONNX execution providers); CPU works out of the box.
+
+---
+
+## Installing & provisioning models (`mfo models`, `mfo sample`)
+
+### Install
+
+mfo's core (import → detect → order → group → render → export) runs with just the base install — no
+optional dependencies, no downloads. Install the CLI globally with **pipx**, or with pip:
+
+```bash
+pipx install mfo                 # isolated global CLI
+pipx install 'mfo[all]'          # + manga-ocr, ONNX detector, Argos, the review UI
+# or, in a virtualenv:
+pip install 'mfo[all]'
+```
+
+Optional engines are à la carte extras: `ocr` (manga-ocr), `ocr-paddle` (PaddleOCR), `detect` (ONNX
+ML detector), `translate` (Argos offline), `review` (the web editor). The big PaddleOCR stack is left
+out of `all` on purpose — add it with `pip install 'mfo[ocr-paddle]'` when you want it.
+
+### `mfo models` — locate, inspect, and fetch optional models
+
+Optional models live in a shared cache directory (default `~/.cache/mfo/models`, override with
+`MFO_MODEL_DIR`). `mfo models` is the one place to manage them:
+
+```bash
+mfo models path                         # show the cache dir (and whether MFO_MODEL_DIR set it)
+mfo models list                         # every known model: cached / missing / managed
+mfo models pull detector-onnx --url <onnx-export-url>   # fetch a downloadable weight file
+```
+
+Two kinds of asset show up in `mfo models list`:
+
+- **Downloadable** (e.g. `detector-onnx`) — a single weight file mfo fetches into the cache. Pass
+  `--url` (or set the per-asset env var, e.g. `MFO_DETECTOR_MODEL_URL`); the download is atomic and
+  idempotent, so re-running is a no-op once cached.
+- **Managed** (`manga-ocr`, `paddleocr`, `argos-ja-en`) — provisioned by its own library and
+  downloaded on first use (or via `argospm` for Argos). `mfo models pull <name>` prints the exact
+  one-line command instead of guessing a URL.
+
+### `mfo sample` — a synthetic dataset for an end-to-end trial
+
+To try the whole pipeline without hunting for pages, generate a small synthetic dataset (drawn
+locally — no download, no copyrighted art) and run it through, fully offline with the baseline
+detector:
+
+```bash
+mfo sample ./sample-pages              # writes a couple of synthetic pages
+mfo init ./sample-project --source ja --target en
+mfo import ./sample-project ./sample-pages
+mfo run ./sample-project               # detect → order → group → … (OCR/translate need their models)
+mfo export ./sample-project --out ./sample-out
+```
+
+The synthetic pages have no Japanese text, so OCR/translation produce nothing meaningful — they're
+there to exercise import → detect → render → **export** plumbing. For a real run, point `mfo import`
+at your own pages and install the `ocr`/`translate` extras (and their models via `mfo models`).

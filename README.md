@@ -12,9 +12,10 @@ required for the core workflow.
 
 ## Status
 
-🚧 **Pre-alpha — in active design & construction.** Nothing is shippable yet.
-See [PLAN.md](PLAN.md) for the milestone roadmap and [CHANGELOG.md](CHANGELOG.md) for what
-has actually landed.
+🧪 **Pre-alpha, but runnable end-to-end.** The full MVP pipeline (import → detect → OCR → translate
+→ render → review → export) and the M7 AI-assist layer have landed; M8 hardening/stretch work is in
+progress. See [PLAN.md](PLAN.md) for the roadmap and [CHANGELOG.md](CHANGELOG.md) for what has
+actually shipped.
 
 ## What it does (target workflow)
 
@@ -65,25 +66,29 @@ Full detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and the data model i
 
 ## Quick start
 
-> Not yet runnable. This is the intended interface; commands arrive over Milestones 0–5.
-
 ```bash
-# install (editable)
-pip install -e ".[dev]"
+# install the CLI (isolated global install with pipx; add [all] for the optional engines)
+pipx install mfo
+pipx install 'mfo[all]'        # manga-ocr + ONNX detector + Argos + review UI
+# or, for development:  pip install -e ".[dev]"
 
-# create a project from a folder of pages
+# kick the tyres on a generated synthetic sample (fully offline, no downloads)
+mfo sample ./sample-pages
+mfo init ./sample-project --source ja --target en
+mfo import ./sample-project ./sample-pages
+mfo run ./sample-project
+mfo export ./sample-project --out ./sample-out
+
+# …or on your own pages:
 mfo init ./my-volume --source ja --target en
-
-# run the full pipeline (or a single stage)
-mfo run ./my-volume
-mfo run ./my-volume --stage ocr
-
-# open the local review editor
-mfo review ./my-volume
-
-# export typeset pages + mapping
-mfo export ./my-volume --out ./out
+mfo import ./my-volume ./pages         # a folder or a .cbz/.zip
+mfo run ./my-volume                     # the full pipeline (or `--stage ocr` for one stage)
+mfo review ./my-volume                  # open the local review editor
+mfo export ./my-volume --out ./out      # typeset pages + source→translation mapping
 ```
+
+Optional models (OCR/detector/translation) are managed with `mfo models` and cached under
+`MFO_MODEL_DIR` — see [docs/USER_GUIDE.md](docs/USER_GUIDE.md#installing--provisioning-models-mfo-models-mfo-sample).
 
 ## Documentation
 

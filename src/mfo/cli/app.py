@@ -10,6 +10,7 @@ orchestrator), and ``review`` (launch the local web editor) are functional.
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 from typing import Annotated
@@ -50,6 +51,8 @@ from mfo.cli.stages import (
 )
 from mfo.core import (
     DEFAULT_THRESHOLD,
+    AssetError,
+    AssetStatus,
     AssistMode,
     GlossaryEntry,
     InMemoryStateStore,
@@ -64,8 +67,12 @@ from mfo.core import (
     SfxMode,
     TranslationStyle,
     TranslationUnit,
+    default_model_dir,
+    find_asset,
     find_preset,
+    iter_assets,
     merge_entries,
+    pull_asset,
     remove_entry,
     remove_preset,
     resolve_jobs,
@@ -73,6 +80,7 @@ from mfo.core import (
     upsert_entry,
     upsert_preset,
 )
+from mfo.core.assets import asset_status
 from mfo.core.grouping import DEFAULT_GAP_RATIO
 from mfo.language import (
     AssistDependencyError,
@@ -1240,6 +1248,89 @@ def export(
             f"  {result.overflow} text placement(s) overflowed their box — review recommended.",
             fg=typer.colors.YELLOW,
         )
+
+
+@app.command()
+def sample(
+    path: Annotated[
+        Path, typer.Argument(help="Directory to write the synthetic sample page images into.")
+    ],
+    pages: Annotated[
+        int, typer.Option("--pages", min=1, help="How many sample pages to generate.")
+    ] = 2,
+) -> None:
+    """Generate a small synthetic sample dataset for an end-to-end trial run (§21).
+
+    The pages are drawn locally (no download, no copyrighted art) and the offline baseline detector
+    finds their text, so the printed sequence runs the whole pipeline on a clean machine.
+    """
+    from mfo.sample import create_sample_pages
+
+    written = create_sample_pages(path, count=pages)
+    typer.secho(f"Wrote {len(written)} sample page(s) to {path.resolve()}", fg=typer.colors.GREEN)
+    typer.echo("Next steps (runs fully offline with the baseline detector):")
+    typer.echo("  mfo init ./sample-project --source ja --target en")
+    typer.echo(f"  mfo import ./sample-project {path}")
+    typer.echo("  mfo run ./sample-project")
+    typer.echo("  mfo export ./sample-project --out ./sample-out")
+
+
+models_app = typer.Typer(
+    no_args_is_help=True,
+    help="Locate, inspect, and fetch the optional model assets (OCR/detector/translation).",
+)
+app.add_typer(models_app, name="models")
+
+
+@models_app.command("path")
+def models_path() -> None:
+    """Show the directory optional model weights are cached in (set MFO_MODEL_DIR to change it)."""
+    typer.echo(str(default_model_dir()))
+    override = os.environ.get("MFO_MODEL_DIR")
+    if override:
+        typer.echo(f"  (from MFO_MODEL_DIR={override})")
+
+
+@models_app.command("list")
+def models_list() -> None:
+    """List the known optional models and whether each is cached, missing, or library-managed."""
+    typer.echo(f"{'NAME':<14} {'KIND':<9} {'STATUS':<8} SUMMARY")
+    for asset in iter_assets():
+        status = asset_status(asset)
+        typer.echo(f"{asset.name:<14} {asset.kind:<9} {status.value:<8} {asset.summary}")
+
+
+@models_app.command("pull")
+def models_pull(
+    name: Annotated[str, typer.Argument(help="Asset name (see `mfo models list`).")],
+    url: Annotated[
+        str | None,
+        typer.Option("--url", help="Override the download URL for a downloadable asset."),
+    ] = None,
+) -> None:
+    """Fetch a downloadable asset into the model cache; explain how to provision managed ones."""
+    asset = find_asset(name)
+    if asset is None:
+        typer.secho(
+            f"Unknown asset {name!r}. See `mfo models list`.", fg=typer.colors.RED, err=True
+        )
+        raise typer.Exit(code=1)
+    try:
+        result = pull_asset(asset, url=url)
+    except AssetError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from exc
+    if result.status is AssetStatus.MANAGED:
+        typer.secho(
+            f"{asset.name} is provisioned by its own library, not a direct download.",
+            fg=typer.colors.YELLOW,
+        )
+        typer.echo(f"  {asset.install_hint}")
+        return
+    if result.downloaded:
+        typer.secho(f"Downloaded {asset.name} to {result.path}", fg=typer.colors.GREEN)
+    else:
+        typer.secho(f"{asset.name} already cached at {result.path}", fg=typer.colors.GREEN)
 
 
 @app.command()

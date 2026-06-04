@@ -10,6 +10,25 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 
 ### M8 — Hardening & Stretch
 
+#### Added — Batch 8.11: Packaging, model tooling & sample data (2026-06-04)
+- **`mfo models` — one place to locate, inspect, and fetch optional models.** New `mfo.core.assets`
+  holds the single catalog of optional engines (`ModelAsset`/`CATALOG`) and the canonical
+  `default_model_dir()` (honouring `MFO_MODEL_DIR`, default `~/.cache/mfo/models`); the ML detector now
+  imports the cache location *and* the shared model filename from here so they're defined once.
+  `mfo models path` shows the cache dir, `mfo models list` reports each model as cached / missing /
+  managed, and `mfo models pull <name>` fetches downloadable weight files (atomic temp+rename,
+  idempotent; `--url` or a per-asset env var supplies the URL) while printing the right one-line
+  command for library-managed models (manga-ocr, PaddleOCR, Argos) instead of guessing a URL.
+- **`mfo sample` + an offline end-to-end smoke run.** `mfo.sample.create_sample_pages` draws a
+  deterministic synthetic dataset locally (no committed binaries, no download, no copyrighted art);
+  `mfo sample <dir>` writes it and prints the init→import→run→export sequence. A new smoke test runs
+  that sequence fully offline (sample → init → import → preprocess → detect → order → group → export)
+  and asserts the export + mapping land — so a clean machine can follow the docs end-to-end (§21).
+- **Packaging.** Added an `all` extra (`pip install 'mfo[all]'` / `pipx install 'mfo[all]'`) bundling
+  manga-ocr, the ONNX detector, Argos, and the review UI; the heavy PaddleOCR stack stays opt-in via
+  `ocr-paddle`. README quick-start refreshed (it now actually runs) and a USER_GUIDE
+  "Installing & provisioning models" section added. (NFR-12, NFR-22, NFR-28; §15, §21)
+
 #### Added — Batch 8.10: LAN & collaborative review (2026-06-04)
 - **Share the review editor on the local network, safely.** `mfo review --host 0.0.0.0` serves the
   editor to co-reviewers on the same network (SG-8); `--token <t>` requires a shared token on every

@@ -47,6 +47,15 @@ review = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
 ]
+# Everything optional except the Paddle stack (large, and an alternative to manga-ocr); convenient
+# for `pipx install 'mfo[all]'`. Paddle stays opt-in via the dedicated `ocr-paddle` extra.
+all = [
+    "manga-ocr>=0.1",
+    "onnxruntime>=1.17",
+    "argostranslate>=1.9",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+]
 dev = [
     "pytest>=8.0",
     "hypothesis>=6.100",

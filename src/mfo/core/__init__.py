@@ -2,6 +2,21 @@
 
 from __future__ import annotations
 
+from mfo.core.assets import (
+    CATALOG,
+    DEFAULT_DETECTOR_MODEL_FILENAME,
+    AssetError,
+    AssetStatus,
+    ModelAsset,
+    PullResult,
+    asset_path,
+    asset_status,
+    default_model_dir,
+    find_asset,
+    iter_assets,
+    pull_asset,
+    resolved_url,
+)
 from mfo.core.confidence import (
     DEFAULT_THRESHOLD,
     aggregate_confidence,
@@ -81,6 +96,20 @@ from mfo.core.series import (
 from mfo.core.traceability import selected_candidate, selected_text
 
 __all__ = [
+    # assets / model tooling
+    "CATALOG",
+    "DEFAULT_DETECTOR_MODEL_FILENAME",
+    "AssetError",
+    "AssetStatus",
+    "ModelAsset",
+    "PullResult",
+    "asset_path",
+    "asset_status",
+    "default_model_dir",
+    "find_asset",
+    "iter_assets",
+    "pull_asset",
+    "resolved_url",
     # confidence
     "DEFAULT_THRESHOLD",
     "aggregate_confidence",

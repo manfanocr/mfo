@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from mfo.core.assets import default_model_dir
 from mfo.vision.detect import (
     DEFAULT_CLASS_LABELS,
     DEFAULT_OVERLAP_FRAC,
@@ -19,7 +20,6 @@ from mfo.vision.detect import (
     baseline_detector,
     classify_region,
     decode_detections,
-    default_model_dir,
     detect_file,
     get_detector,
     merge_overlapping_regions,
