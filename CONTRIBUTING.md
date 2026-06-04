@@ -13,8 +13,6 @@ submit changes.
 
 ## Dev setup
 
-> Tooling lands in batch 0.1; this is the intended setup.
-
 ```bash
 git clone <repo> && cd mfo
 python -m venv .venv && source .venv/bin/activate   # Python ≥ 3.11
@@ -26,8 +24,9 @@ pre-commit install
 
 ```bash
 ruff check . && ruff format --check .   # lint + format
-mypy src                                # types
+mypy src                                # types (the library; tests use loose fakes)
 pytest                                  # tests
+pytest --cov=mfo --cov-report=term      # optional: coverage report
 ```
 
 CI runs the same on Python 3.11–3.13; PRs must be green.

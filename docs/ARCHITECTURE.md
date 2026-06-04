@@ -65,8 +65,12 @@ Project directory (§15), `manifest.json`, SQLite for relational/edit data, cont
 dirs, atomic writes (temp + rename) for crash safety (NFR-10/11). See DATA_MODEL.md.
 
 ### 6. cli
-Typer app: `init`, `run`, `status`, `review`, `export`. Headless and scriptable (FR-44-47).
-Config = file + CLI overrides.
+Typer app. The pipeline commands (`init`, `import`, `preprocess`, `detect`, `ocr`, `order`,
+`group`, `translate`, `render`, `export`) plus orchestration (`run`, `status`, `bench`), the review
+editor (`review`), optional refinement (`assist`, `ocr-correct`, `sfx`), shared terminology
+(`glossary`, `preset`), and provisioning (`models`, `sample`). Each command is thin: it resolves
+config + a project and delegates to the inner layers. Headless and scriptable (FR-44-47);
+config = file + CLI overrides.
 
 ### 7. ui
 Local web review app: FastAPI backend over the same `core`/`storage` APIs + a lightweight SPA.
@@ -83,6 +87,10 @@ the core path offline (I-7/I-8) while allowing cloud/GPU opt-ins (NFR-22/24). Pl
 ```
 config → registry → resolve("ocr", "manga-ocr") → OCREngine instance
 ```
+
+Optional model weights (the ONNX detector, manga-ocr, Argos, PaddleOCR) live **out of project** in
+a shared cache under `MFO_MODEL_DIR` (default `~/.cache/mfo/models`), catalogued in
+`core.assets` and provisioned with `mfo models`. The offline defaults never need it (I-7/I-8).
 
 Resolution is centralized in `core.plugins.resolve_factory`: each layer keeps a built-in
 `_FACTORIES` registry, and the `get_*` resolvers consult those built-ins first, then **entry-point
