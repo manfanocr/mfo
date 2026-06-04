@@ -406,13 +406,20 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
   review API `POST /api/glossary/series/promote`. Unlinked projects are unchanged (offline core
   unaffected, I-7). USER_GUIDE + DATA_MODEL. See CHANGELOG.
 
-### Batch 8.6 — Per-series style presets (SG-4)
+### Batch 8.6 — Per-series style presets (SG-4) ✅ *(landed 2026-06-04)*
 - **Scope:** Named, series-scoped presets bundling translation style (4.2), the shared glossary
   (8.5), and render presets (5.2), selectable when creating/configuring a project. *(Depends on 8.5
   for the glossary half.)*
 - **Satisfies:** SG-4; FR-25, FR-35; §12.5.
 - **DoD:** Applying a series preset to a new project sets its style, glossary, and render config in
   one step; presets persist and are listed by name.
+- **Shipped:** `mfo.core.presets` (`SeriesPreset` bundling style + series-glossary link +
+  `RenderPreset` masking knobs; `SeriesPresetStore` + `upsert_preset`/`remove_preset`/`find_preset`/
+  `series_preset_names`); `mfo.storage.presets` (atomic, versioned JSON store outside the project that
+  doubles as the portable export — load/save round-trip losslessly); `apply_series_preset` (CLI) sets
+  style (preserving the translator), links the glossary, and persists render config in one step. CLI:
+  `mfo preset save/list/remove/apply`. Project-config wiring only, so unlinked projects are unchanged
+  (offline core unaffected, I-7); no schema migration. USER_GUIDE + DATA_MODEL. See CHANGELOG.
 
 ### Batch 8.7 — SFX detection & transliteration (SG-5)
 - **Scope:** Classify SFX regions (the `RegionType.SFX` already exists) and handle them distinctly
@@ -468,7 +475,7 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
 - [x] M5 Render & Export
 - [x] M6 Review Editor *(MVP complete — M0–M6 satisfy the DoD §21)*
 - [x] M7 AI Refinement *(7.1 assist adapter, 7.2 modes, 7.3 confidence-driven review)*
-- [ ] M8 Hardening & Stretch *(planned into batches 8.0–8.11; 8.0 fused detect+recognize, 8.1 parallel processing, 8.2 archive import, 8.3 plugin system, 8.4 panel-aware context, 8.5 cross-volume glossary landed)*
+- [ ] M8 Hardening & Stretch *(planned into batches 8.0–8.11; 8.0 fused detect+recognize, 8.1 parallel processing, 8.2 archive import, 8.3 plugin system, 8.4 panel-aware context, 8.5 cross-volume glossary, 8.6 per-series style presets landed)*
 
 When a batch lands: tick it, and append a dated entry to [CHANGELOG.md](CHANGELOG.md) with the
 spec IDs it satisfied.

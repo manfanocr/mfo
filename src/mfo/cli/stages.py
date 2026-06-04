@@ -28,6 +28,7 @@ from mfo.core.glossary import (
 )
 from mfo.core.grouping import DEFAULT_GAP_RATIO
 from mfo.core.pipeline import Pipeline, Stage
+from mfo.core.presets import SeriesPreset
 from mfo.language import TranslationRequest, Translator, get_translator
 from mfo.render import (
     CompositeArtifact,
@@ -488,6 +489,21 @@ def link_series_glossary(store: ProjectStore, path: Path) -> None:
     project_config = dict(store.project.config)
     project_config["series_glossary"] = str(path)
     store.set_project(store.project.model_copy(update={"config": project_config}))
+
+
+def apply_series_preset(store: ProjectStore, preset: SeriesPreset) -> None:
+    """Apply a series preset to a project in one step: style, glossary link, render config (SG-4).
+
+    Sets the translation style (preserving any already-chosen translator), links the shared series
+    glossary if the preset names one, and persists the render (masking) config — so a new volume
+    adopts the whole bundle with a single command (FR-25, FR-35).
+    """
+    translate_config = store.project.config.get("translate") or {}
+    translator = translate_config.get("translator", "argos")
+    save_translate_config(store, translator, style=preset.style)
+    if preset.glossary_path:
+        link_series_glossary(store, Path(preset.glossary_path))
+    save_render_config(store, MaskConfig(pad=preset.render.pad, border=preset.render.border))
 
 
 def load_effective_glossary(store: ProjectStore) -> tuple[GlossaryEntry, ...]:

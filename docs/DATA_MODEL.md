@@ -53,6 +53,14 @@ volumes of one series can link to it and inherit terms (SG-2, SG-3). A volume li
 `Project.config["series_glossary"]` (a path). A unit consults **project → series**, project entries
 winning (`merge_glossaries`); the store round-trips losslessly for team export/import.
 
+### SeriesPreset / SeriesPresetStore (cross-volume, out-of-project)
+`SeriesPresetStore` = `presets[]`; each `SeriesPreset` = `name · style · glossary_path? · render`
+(where `render` = `RenderPreset(pad · border)`). A named bundle of the three per-series settings — the
+translation style, a link to the shared series glossary, and the render (masking) config — persisted
+in a single JSON file **outside** any project so a series' volumes share it (SG-4). Applying a preset
+writes `Project.config`'s `translate.style`, `series_glossary`, and `render` keys in one step; the
+store round-trips losslessly for team export/import.
+
 ## Relationships
 
 ```

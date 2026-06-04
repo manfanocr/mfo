@@ -27,6 +27,7 @@ from mfo.cli.stages import (
     PREPROCESS_STAGE,
     RENDER_STAGE,
     TRANSLATE_STAGE,
+    apply_series_preset,
     archive_extract_dir,
     build_pipeline,
     composite_page_file,
@@ -56,12 +57,18 @@ from mfo.core import (
     ReadingDirection,
     Region,
     RenderArtifact,
+    RenderPreset,
+    SeriesPreset,
     TranslationStyle,
     TranslationUnit,
+    find_preset,
     merge_entries,
     remove_entry,
+    remove_preset,
     resolve_jobs,
+    series_preset_names,
     upsert_entry,
+    upsert_preset,
 )
 from mfo.core.grouping import DEFAULT_GAP_RATIO
 from mfo.language import (
@@ -89,10 +96,12 @@ from mfo.storage import (
     group_into_units,
     import_pages,
     load_series_glossary,
+    load_series_presets,
     mask_pages,
     ocr_regions,
     preprocess_pages,
     save_series_glossary,
+    save_series_presets,
     translate_units,
     write_mapping,
 )
@@ -739,6 +748,90 @@ def series_import(
         save_series_glossary(store_path, merged)
     verb = "Replaced with" if replace else "Merged in"
     typer.secho(f"{verb} {len(incoming.entries)} series entr(ies).", fg=typer.colors.GREEN)
+
+
+preset_app = typer.Typer(
+    no_args_is_help=True,
+    help="Manage per-series style presets (style + shared glossary + render config; SG-4).",
+)
+app.add_typer(preset_app, name="preset")
+
+
+@preset_app.command("save")
+def preset_save(
+    store_path: Annotated[Path, typer.Argument(help="Series-preset store file (JSON).")],
+    name: Annotated[str, typer.Argument(help="Preset name (unique within the store).")],
+    style: Annotated[
+        TranslationStyle, typer.Option("--style", help="Translation register (FR-25).")
+    ] = TranslationStyle.BALANCED,
+    glossary: Annotated[
+        Path | None,
+        typer.Option("--glossary", help="Shared series-glossary store to link when applied (8.5)."),
+    ] = None,
+    pad: Annotated[
+        int, typer.Option("--pad", help="Render: grow each masked box by this many px.")
+    ] = 2,
+    border: Annotated[
+        int, typer.Option("--border", help="Render: width (px) of the background-sampling ring.")
+    ] = 4,
+) -> None:
+    """Define or replace a named series preset (matched by name)."""
+    preset = SeriesPreset(
+        name=name,
+        style=style,
+        glossary_path=str(glossary) if glossary is not None else None,
+        render=RenderPreset(pad=pad, border=border),
+    )
+    store = upsert_preset(load_series_presets(store_path), preset)
+    save_series_presets(store_path, store)
+    typer.secho(f"Saved preset {name!r} ({style.value}).", fg=typer.colors.GREEN)
+
+
+@preset_app.command("list")
+def preset_list(
+    store_path: Annotated[Path, typer.Argument(help="Series-preset store file (JSON).")],
+) -> None:
+    """List the presets in a series-preset store by name."""
+    store = load_series_presets(store_path)
+    if not store.presets:
+        typer.echo("No presets.")
+        return
+    for preset in store.presets:
+        line = f"  {preset.name}  ({preset.style.value}; pad={preset.render.pad}, "
+        line += f"border={preset.render.border})"
+        if preset.glossary_path:
+            line += f"  glossary: {preset.glossary_path}"
+        typer.echo(line)
+
+
+@preset_app.command("remove")
+def preset_remove(
+    store_path: Annotated[Path, typer.Argument(help="Series-preset store file (JSON).")],
+    name: Annotated[str, typer.Argument(help="Name of the preset to remove.")],
+) -> None:
+    """Remove a preset from a series-preset store by name."""
+    store = load_series_presets(store_path)
+    if name not in series_preset_names(store):
+        typer.secho(f"No preset named {name!r}.", fg=typer.colors.YELLOW, err=True)
+        raise typer.Exit(code=1) from None
+    save_series_presets(store_path, remove_preset(store, name))
+    typer.secho(f"Removed preset {name!r}.", fg=typer.colors.GREEN)
+
+
+@preset_app.command("apply")
+def preset_apply(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+    store_path: Annotated[Path, typer.Argument(help="Series-preset store file (JSON).")],
+    name: Annotated[str, typer.Argument(help="Name of the preset to apply.")],
+) -> None:
+    """Apply a series preset to a project: set style, link glossary, set render config (SG-4)."""
+    preset = find_preset(load_series_presets(store_path), name)
+    if preset is None:
+        typer.secho(f"No preset named {name!r}.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from None
+    with _open_store(path) as store:
+        apply_series_preset(store, preset)
+    typer.secho(f"Applied preset {name!r} ({preset.style.value}).", fg=typer.colors.GREEN)
 
 
 @app.command()

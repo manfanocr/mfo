@@ -60,6 +60,15 @@ from mfo.core.plugins import (
     discover_plugins,
     resolve_factory,
 )
+from mfo.core.presets import (
+    RenderPreset,
+    SeriesPreset,
+    SeriesPresetStore,
+    find_preset,
+    remove_preset,
+    series_preset_names,
+    upsert_preset,
+)
 from mfo.core.reading_order import order_regions, order_regions_by_panels, panel_of
 from mfo.core.series import (
     SeriesGlossary,
@@ -97,6 +106,14 @@ __all__ = [
     "merge_entries",
     "remove_entry",
     "upsert_entry",
+    # series presets
+    "RenderPreset",
+    "SeriesPreset",
+    "SeriesPresetStore",
+    "find_preset",
+    "remove_preset",
+    "series_preset_names",
+    "upsert_preset",
     # grouping
     "group_regions",
     # ids

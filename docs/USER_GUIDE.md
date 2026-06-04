@@ -214,6 +214,32 @@ unaffected — the offline core path is unchanged (I-7). The review editor can a
 
 ---
 
+## Per-series style presets (`mfo preset …`, SG-4)
+
+A series' volumes should read and look the same. A **series preset** is a named bundle of the three
+per-series decisions — the translation **style**, a link to the shared **series glossary**, and the
+**render** (masking) knobs — kept in a single JSON store **outside** any project, so every volume can
+adopt the same look in one step:
+
+```bash
+# Define a preset (in ./series-presets.json) for the whole series:
+mfo preset save ./series-presets.json house \
+    --style natural --glossary ./series.json --pad 3 --border 6
+mfo preset list ./series-presets.json
+
+# Apply it to a new volume — sets style, links the glossary, and sets render config at once:
+mfo preset apply vol2 ./series-presets.json house
+
+mfo preset remove ./series-presets.json house
+```
+
+`apply` writes the project's `translate.style`, `series_glossary`, and `render` config in one go
+(preserving any translator you already chose). The preset store doubles as the portable export — it
+round-trips losslessly, so a team can share one file. A project that never applies a preset resolves
+exactly as before (the offline core is unaffected, I-7).
+
+---
+
 ## AI-assisted refinement (`mfo assist`)
 
 An **optional** layer that uses an LLM to refine your translations — more natural phrasing, a

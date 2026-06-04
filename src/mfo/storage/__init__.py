@@ -25,6 +25,11 @@ from mfo.storage.mapping import MAPPING_VERSION, build_mapping, write_mapping
 from mfo.storage.ocr import RecognizedSpan, ocr_regions
 from mfo.storage.pipeline_state import JsonStateStore
 from mfo.storage.preprocess import preprocess_pages
+from mfo.storage.presets import (
+    SERIES_PRESETS_VERSION,
+    load_series_presets,
+    save_series_presets,
+)
 from mfo.storage.project import ProjectStore
 from mfo.storage.reading_order import assign_reading_order
 from mfo.storage.render import (
@@ -90,6 +95,10 @@ __all__ = [
     "SERIES_GLOSSARY_VERSION",
     "load_series_glossary",
     "save_series_glossary",
+    # series presets
+    "SERIES_PRESETS_VERSION",
+    "load_series_presets",
+    "save_series_presets",
     # grouping
     "group_into_units",
     # translate

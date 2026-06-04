@@ -10,6 +10,24 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 
 ### M8 — Hardening & Stretch
 
+#### Added — Batch 8.6: Per-series style presets (2026-06-04)
+- **One named preset configures a new volume's look in a single step.** A series spans many volumes
+  that should read and look the same; `mfo.core.presets.SeriesPreset` bundles the three per-series
+  decisions under one name — the translation **style** (4.2), a link to the shared **series glossary**
+  (8.5), and the **render** (masking) config — and `apply_series_preset` writes all three into a
+  project's config at once (SG-4). `mfo.storage.presets` persists a named collection of presets in a
+  single JSON file **outside** any project (so a series' volumes share it), atomically and in a
+  versioned format that doubles as the portable export — `load_series_presets`/`save_series_presets`
+  round-trip losslessly.
+- **CLI.** `mfo preset save <store> <name> [--style --glossary --pad --border]` defines or replaces a
+  preset; `mfo preset list/remove <store>` manage the store by name; `mfo preset apply <proj> <store>
+  <name>` adopts it — setting the style (preserving any chosen translator), linking the series
+  glossary, and persisting the render config in one command.
+- **Offline core unchanged.** Presets are pure project-config wiring over existing keys
+  (`translate.style`, `series_glossary`, `render`), so a project that never applies one resolves
+  exactly as before (I-7); no schema migration (the preset store lives outside the project DB).
+  USER_GUIDE + DATA_MODEL updated. (SG-4; FR-25, FR-35; §12.5)
+
 #### Added — Batch 8.5: Cross-volume name & terminology memory (2026-06-04)
 - **A shared series glossary carries names and terms across volumes.** A series spans many volumes,
   each its own project; `mfo.core.series.SeriesGlossary` is a shared store (a single JSON file

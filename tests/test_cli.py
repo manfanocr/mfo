@@ -665,6 +665,84 @@ def test_series_export_import_round_trip(tmp_path: Path) -> None:
     assert "鬼 -> oni" in runner.invoke(app, ["glossary", "series", "list", str(vol2)]).stdout
 
 
+def test_preset_save_list_and_apply(tmp_path: Path) -> None:
+    # The DoD: applying a series preset sets style + glossary + render config in one step (SG-4).
+    store_file = tmp_path / "presets.json"
+    glossary_file = tmp_path / "series.json"
+    vol = tmp_path / "vol"
+    runner.invoke(app, ["init", str(vol)])
+
+    saved = runner.invoke(
+        app,
+        [
+            "preset",
+            "save",
+            str(store_file),
+            "house",
+            "--style",
+            "natural",
+            "--glossary",
+            str(glossary_file),
+            "--pad",
+            "3",
+            "--border",
+            "6",
+        ],
+    )
+    assert saved.exit_code == 0, saved.stdout
+
+    listed = runner.invoke(app, ["preset", "list", str(store_file)])
+    assert "house" in listed.stdout
+    assert "natural" in listed.stdout
+
+    applied = runner.invoke(app, ["preset", "apply", str(vol), str(store_file), "house"])
+    assert applied.exit_code == 0, applied.stdout
+
+    with ProjectStore.open(vol) as store:
+        config = store.project.config
+        assert config["translate"]["style"] == "natural"
+        assert config["series_glossary"] == str(glossary_file)
+        assert config["render"] == {"pad": 3, "border": 6}
+
+
+def test_preset_apply_preserves_existing_translator(tmp_path: Path) -> None:
+    store_file = tmp_path / "presets.json"
+    vol = tmp_path / "vol"
+    runner.invoke(app, ["init", str(vol)])
+    # A translator was already chosen; applying a preset changes the style but keeps the translator.
+    runner.invoke(app, ["preset", "save", str(store_file), "house", "--style", "literal"])
+    with ProjectStore.open(vol) as store:
+        config = dict(store.project.config)
+        config["translate"] = {"translator": "deepl", "style": "balanced"}
+        store.set_project(store.project.model_copy(update={"config": config}))
+
+    runner.invoke(app, ["preset", "apply", str(vol), str(store_file), "house"])
+    with ProjectStore.open(vol) as store:
+        assert store.project.config["translate"] == {"translator": "deepl", "style": "literal"}
+
+
+def test_preset_apply_missing_preset_exits_1(tmp_path: Path) -> None:
+    store_file = tmp_path / "presets.json"
+    vol = tmp_path / "vol"
+    runner.invoke(app, ["init", str(vol)])
+    runner.invoke(app, ["preset", "save", str(store_file), "house"])
+    result = runner.invoke(app, ["preset", "apply", str(vol), str(store_file), "nope"])
+    assert result.exit_code == 1
+
+
+def test_preset_remove(tmp_path: Path) -> None:
+    store_file = tmp_path / "presets.json"
+    runner.invoke(app, ["preset", "save", str(store_file), "house"])
+    runner.invoke(app, ["preset", "save", str(store_file), "shout"])
+    removed = runner.invoke(app, ["preset", "remove", str(store_file), "house"])
+    assert removed.exit_code == 0, removed.stdout
+    listed = runner.invoke(app, ["preset", "list", str(store_file)])
+    assert "house" not in listed.stdout
+    assert "shout" in listed.stdout
+    # Removing an absent preset reports an error.
+    assert runner.invoke(app, ["preset", "remove", str(store_file), "house"]).exit_code == 1
+
+
 def test_export_mapping_writes_json(tmp_path: Path) -> None:
     target = tmp_path / "vol"
     runner.invoke(app, ["init", str(target), "--source", "ja", "--target", "en"])
