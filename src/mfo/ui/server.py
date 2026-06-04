@@ -14,6 +14,7 @@ clear, actionable error rather than a bare ``ImportError`` so the offline core s
 
 from __future__ import annotations
 
+import secrets
 from pathlib import Path
 from typing import Any
 
@@ -231,7 +232,8 @@ def create_app(store: ProjectStore, *, auth_token: str | None = None) -> FastAPI
     @app.middleware("http")
     async def _require_token(request: Request, call_next: Any) -> Any:
         gated = auth_token is not None and request.url.path.startswith("/api")
-        if gated and _request_token(request) != auth_token:
+        # Constant-time compare so the token can't be recovered by timing the 401 response.
+        if gated and not secrets.compare_digest(_request_token(request) or "", auth_token or ""):
             return JSONResponse(
                 status_code=401, content={"detail": "missing or invalid review token"}
             )
