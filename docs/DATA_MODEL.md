@@ -20,7 +20,9 @@ holds derived-image metadata (cache refs, deskew/orientation), never overwriting
 
 ### Region
 `id · page_id · bbox|polygon · type · reading_order_index · panel_index · confidence · status`
-A detected text area. `type` ∈ {bubble, narration, sfx, caption, side_text, unknown}.
+A detected text area. When `polygon` (a bubble outline) is present, the render font-fitter wraps text
+to the bubble *shape* rather than the box, so it stays inside round/irregular bubbles (SG-6); a
+box-only region renders unchanged. `type` ∈ {bubble, narration, sfx, caption, side_text, unknown}.
 `status` ∈ {auto, correct, needs_review, ignore, manual} (FR-40). `reading_order_index` set by
 the structure stage (FR-16) and user-overridable (FR-20). `panel_index` records which panel/frame
 the region sits in when the structure stage runs panel-aware (FR-18), so translation context can be

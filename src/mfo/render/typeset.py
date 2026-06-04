@@ -1,10 +1,15 @@
-"""Font fitting & text placement for the render stage (§10.8; FR-34/35, NFR-3; SG-6 groundwork).
+"""Font fitting & text placement for the render stage (§10.8; FR-34/35, NFR-3; SG-6).
 
 Pure and storage-free. Given a translated string and the bounding box it must live in, this picks
 the largest font size at which the text — wrapped to the box width — still fits the box height, then
 lays the lines out with the requested alignment and stroke/outline. The result is a
 :class:`TextLayout` (what to draw and where) and a :func:`render_layout` that paints it onto a
 transparent RGBA tile the size of the box, ready for the compositing batch to paste onto a page.
+
+When the region carries a bubble outline, :func:`fit_text` instead follows the bubble *shape*
+(SG-6): it wraps each line to the polygon's interior width at that line's height (via
+:mod:`mfo.render.shape`), so text stays inside round/irregular bubbles. A region with no polygon
+uses the box path unchanged, so its render is byte-identical.
 
 Design choices, tied to the spec:
 
@@ -22,14 +27,15 @@ Design choices, tied to the spec:
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import cast
 
 from PIL import Image, ImageDraw, ImageFont
 
-from mfo.core.geometry import BBox
+from mfo.core.geometry import BBox, Point
+from mfo.render.shape import band_inner
 
 # An RGBA colour. Text and stroke colours carry their own alpha so a preset can be fully transparent
 # (e.g. "no outline") without a separate flag.
@@ -156,6 +162,11 @@ class TextLayout:
     text_width: int
     text_height: int
     overflow: bool
+    # Bubble-shape-aware layout (SG-6): for a polygon fit, the per-line interior span ``(left,
+    # right)`` in box-local coords and the block's top y. ``None`` for an ordinary rectangular box
+    # fit, which leaves the existing box-based rendering byte-identical.
+    line_bands: tuple[tuple[float, float], ...] | None = None
+    y_start: float | None = None
 
 
 def _line_width(text: str, font: ImageFont.FreeTypeFont, stroke_width: int) -> float:
@@ -225,18 +236,154 @@ def _measure_block(
     return width, height, line_step
 
 
+def _wrap_variable(
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    cap_for: Callable[[int], float],
+    stroke_width: int,
+) -> list[str]:
+    """Greedily wrap ``text`` where line ``i`` may use up to ``cap_for(i)`` pixels (SG-6).
+
+    Like :func:`wrap_text` but the width budget varies per line, so text follows a bubble that is
+    narrow at the top and wide in the middle. Any word too wide for its line's cap is hard-broken.
+    """
+    words = text.split()
+    if not words:
+        return [""]
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        cap = cap_for(len(lines))
+        candidate = f"{current} {word}" if current else word
+        if _line_width(candidate, font, stroke_width) <= cap:
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+            current = ""
+        cap = cap_for(len(lines))
+        if _line_width(word, font, stroke_width) <= cap:
+            current = word
+        else:
+            pieces = _break_word(word, font, max(1.0, cap), stroke_width)
+            lines.extend(pieces[:-1])
+            current = pieces[-1]
+    if current:
+        lines.append(current)
+    return lines
+
+
+# How many fixed-point passes to settle the line count when fitting to a polygon. The wrapped line
+# count and the per-line widths depend on each other (a vertically-centred block samples different
+# bands), so we iterate a few times; it converges quickly and the bound keeps it deterministic.
+_SHAPE_PASSES = 4
+
+
+def _fit_shaped(
+    text: str,
+    box: BBox,
+    preset: StylePreset,
+    polygon: Sequence[Point],
+    load_font: FontLoader,
+) -> TextLayout | None:
+    """Fit ``text`` to the bubble *shape* given by ``polygon`` (SG-6), or ``None`` if not feasible.
+
+    The polygon is taken in the same space as ``box``; each candidate font size lays the wrapped
+    block out vertically-centred in the box and wraps each line to the polygon's interior width at
+    that line's height, settling the line count over a few passes. The largest size whose block sits
+    inside the polygon wins; if none do, the smallest size is returned with ``overflow`` set.
+    """
+    local = [Point(x=p.x - box.x, y=p.y - box.y) for p in polygon]
+    pad = preset.padding
+    avail_h = box.height - 2 * pad
+
+    def bands_for(
+        lines: list[str], line_height: int, line_step: int
+    ) -> tuple[float, list[tuple[float, float]]]:
+        """The block's top y (vertically centred) and each line's interior span for these lines."""
+        n = len(lines)
+        block_h = line_step * (n - 1) + line_height if n else 0
+        y_start = pad + max(0.0, (avail_h - block_h) / 2)
+        bands: list[tuple[float, float]] = []
+        for i in range(n):
+            top = y_start + i * line_step
+            span = band_inner(local, top, top + line_height)
+            bands.append((0.0, 0.0) if span is None else span)
+        return y_start, bands
+
+    best: TextLayout | None = None
+    for size in range(preset.max_size, preset.min_size - 1, -1):
+        font = load_font(preset.font_path, size)
+        line_height = _line_height(font, preset.stroke_width)
+        line_step = round(line_height * preset.line_spacing)
+
+        lines = wrap_text(text, font, max(1.0, box.width - 2 * pad), preset.stroke_width)
+        for _ in range(_SHAPE_PASSES):
+            _, bands = bands_for(lines, line_height, line_step)
+
+            def cap_for(i: int, _bands: list[tuple[float, float]] = bands) -> float:
+                left, right = _bands[i] if i < len(_bands) else _bands[-1]
+                return right - left - 2 * pad
+
+            new_lines = _wrap_variable(text, font, cap_for, preset.stroke_width)
+            if new_lines == lines:
+                break
+            lines = new_lines
+
+        # Recompute bands for the final line set so bands and lines always line up.
+        y_start, bands = bands_for(lines, line_height, line_step)
+        n = len(lines)
+        block_h = line_step * (n - 1) + line_height if n else 0
+        widths = [_line_width(line, font, preset.stroke_width) for line in lines]
+        fits = (
+            block_h <= avail_h
+            and all(right - left - 2 * pad > 0 for left, right in bands)
+            and all(w <= (bands[i][1] - bands[i][0] - 2 * pad) for i, w in enumerate(widths))
+        )
+        layout = TextLayout(
+            text=text,
+            box=box,
+            preset=preset,
+            lines=tuple(lines),
+            font_size=size,
+            line_height=line_height,
+            line_step=line_step,
+            text_width=round(max(widths, default=0)),
+            text_height=block_h,
+            overflow=not fits,
+            line_bands=tuple(bands),
+            y_start=y_start,
+        )
+        if fits:
+            return layout
+        best = layout
+
+    return best
+
+
 def fit_text(
     text: str,
     box: BBox,
     preset: StylePreset,
     *,
+    polygon: Sequence[Point] | None = None,
     load_font: FontLoader = load_font,
 ) -> TextLayout:
     """Find the largest font size at which ``text`` fits ``box`` and lay it out (FR-34, NFR-3).
 
     The search shrinks from ``preset.max_size`` to ``preset.min_size``; the first size whose wrapped
     block fits the padded box wins. If none fit, the smallest size is used and ``overflow`` is set.
+
+    When ``polygon`` is given (the region's bubble outline, SG-6), the fit follows the bubble shape
+    rather than the bounding box, so text stays inside round/irregular bubbles. A region with no
+    polygon uses the box path unchanged, so its render is byte-identical.
     """
+    if polygon is not None and len(polygon) >= 3:
+        shaped = _fit_shaped(text, box, preset, polygon, load_font)
+        if shaped is not None:
+            return shaped
+        # Fall back to the box fit if the polygon was degenerate/unusable.
+
     avail_w = box.width - 2 * preset.padding
     avail_h = box.height - 2 * preset.padding
 
@@ -282,6 +429,10 @@ def render_layout(layout: TextLayout, *, load_font: FontLoader = load_font) -> I
     font = load_font(preset.font_path, layout.font_size)
     draw = ImageDraw.Draw(tile)
 
+    if layout.line_bands is not None and layout.y_start is not None:
+        _draw_shaped(draw, layout, font)
+        return tile
+
     avail_w = width - 2 * preset.padding
     y = preset.padding + max(0, (height - 2 * preset.padding - layout.text_height) // 2)
     for line in layout.lines:
@@ -304,13 +455,42 @@ def render_layout(layout: TextLayout, *, load_font: FontLoader = load_font) -> I
     return tile
 
 
+def _draw_shaped(
+    draw: ImageDraw.ImageDraw, layout: TextLayout, font: ImageFont.FreeTypeFont
+) -> None:
+    """Paint a polygon (bubble) layout: each line aligned within its own interior band (SG-6)."""
+    preset = layout.preset
+    pad = preset.padding
+    assert layout.line_bands is not None and layout.y_start is not None
+    y = layout.y_start
+    for line, (left, right) in zip(layout.lines, layout.line_bands, strict=True):
+        line_w = _line_width(line, font, preset.stroke_width)
+        inner_w = right - left - 2 * pad
+        if preset.align == "left":
+            x = left + pad
+        elif preset.align == "right":
+            x = left + pad + (inner_w - line_w)
+        else:
+            x = left + pad + (inner_w - line_w) / 2
+        draw.text(
+            (round(x), round(y)),
+            line,
+            font=font,
+            fill=preset.fill,
+            stroke_width=preset.stroke_width,
+            stroke_fill=preset.stroke_fill,
+        )
+        y += layout.line_step
+
+
 def typeset(
     text: str,
     box: BBox,
     preset: StylePreset,
     *,
+    polygon: Sequence[Point] | None = None,
     load_font: FontLoader = load_font,
 ) -> Image.Image:
     """Fit ``text`` to ``box`` and render it: convenience over fit_text + render_layout (FR-34)."""
-    layout = fit_text(text, box, preset, load_font=load_font)
+    layout = fit_text(text, box, preset, polygon=polygon, load_font=load_font)
     return render_layout(layout, load_font=load_font)

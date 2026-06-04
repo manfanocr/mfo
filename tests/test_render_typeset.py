@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from PIL import ImageFont
 
-from mfo.core.geometry import BBox
+from mfo.core.geometry import BBox, Point
 from mfo.render import (
     DEFAULT_PRESET,
     PRESETS,
@@ -18,6 +18,18 @@ from mfo.render import (
     typeset,
     wrap_text,
 )
+from mfo.render.typeset import _line_width
+
+
+def _diamond(box: BBox) -> list[Point]:
+    """A diamond inscribed in ``box``: widest across the middle, pointed at top/bottom."""
+    cx, cy = box.x + box.width / 2, box.y + box.height / 2
+    return [
+        Point(x=cx, y=box.y),
+        Point(x=box.right, y=cy),
+        Point(x=cx, y=box.bottom),
+        Point(x=box.x, y=cy),
+    ]
 
 
 def _avail(box: BBox, preset: StylePreset) -> tuple[float, float]:
@@ -146,3 +158,61 @@ def test_load_font_default_is_cached() -> None:
     b = load_font(None, 20)
     assert isinstance(a, ImageFont.FreeTypeFont)
     assert a is b  # cached by (path, size)
+
+
+# -- bubble-shape-aware fitting (SG-6) --------------------------------------------------------
+
+
+def test_no_polygon_is_byte_identical_to_the_box_fit() -> None:
+    # DoD: a region with no polygon renders exactly as before (no regression).
+    preset = get_preset(DEFAULT_PRESET)
+    box = BBox(x=0, y=0, width=160, height=120)
+    text = "Rectangular regions are unchanged"
+
+    plain = fit_text(text, box, preset)
+    explicit_none = fit_text(text, box, preset, polygon=None)
+    assert plain.line_bands is None  # box fit carries no per-line bands
+    assert explicit_none == plain
+    assert render_layout(explicit_none).tobytes() == render_layout(plain).tobytes()
+
+
+def test_shaped_fit_keeps_every_line_inside_the_bubble() -> None:
+    # DoD: text fits inside a non-rectangular polygon without crossing the outline (SG-6).
+    preset = get_preset(DEFAULT_PRESET)
+    box = BBox(x=0, y=0, width=240, height=240)
+    text = "A round bubble narrows toward its top and bottom edges"
+
+    layout = fit_text(text, box, preset, polygon=_diamond(box))
+
+    assert layout.line_bands is not None and layout.y_start is not None
+    assert not layout.overflow
+    font = load_font(preset.font_path, layout.font_size)
+    # Every line, measured, fits within its band's interior width — so it never crosses the outline.
+    for line, (left, right) in zip(layout.lines, layout.line_bands, strict=True):
+        cap = right - left - 2 * preset.padding
+        assert _line_width(line, font, preset.stroke_width) <= cap
+
+
+def test_shaped_fit_is_tighter_than_the_box_fit() -> None:
+    # The diamond has less usable width than its bounding box, so the same text wraps to more lines
+    # (or a smaller font) than the plain box fit — proving the shape actually constrains the layout.
+    preset = get_preset(DEFAULT_PRESET)
+    box = BBox(x=0, y=0, width=200, height=200)
+    text = "The shape constrains the available width per line"
+
+    box_fit = fit_text(text, box, preset)
+    shaped = fit_text(text, box, preset, polygon=_diamond(box))
+
+    assert (shaped.font_size, len(shaped.lines)) != (box_fit.font_size, len(box_fit.lines))
+
+
+def test_shaped_fit_is_deterministic() -> None:
+    preset = get_preset(DEFAULT_PRESET)
+    box = BBox(x=0, y=0, width=220, height=220)
+    polygon = _diamond(box)
+    text = "Same inputs, same shaped layout"
+
+    first = fit_text(text, box, preset, polygon=polygon)
+    second = fit_text(text, box, preset, polygon=polygon)
+    assert first == second
+    assert render_layout(first).tobytes() == render_layout(second).tobytes()

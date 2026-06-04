@@ -24,7 +24,7 @@ from typing import Any, Protocol
 
 from mfo.core import Page, Region, RenderArtifact, TranslationUnit, selected_text
 from mfo.core.enums import RegionStatus, RegionType
-from mfo.core.geometry import BBox
+from mfo.core.geometry import BBox, Point
 from mfo.core.parallel import parallel_map
 from mfo.storage.atomic import atomic_write_bytes
 from mfo.storage.hashing import content_key, sha256_file
@@ -166,11 +166,16 @@ _TYPE_PRESETS: dict[RegionType, str] = {
 
 @dataclass(frozen=True)
 class PagePlacement:
-    """One translated string to set into ``bbox`` using the named style ``preset`` (FR-34/35)."""
+    """One translated string to set into ``bbox`` using the named style ``preset`` (FR-34/35).
+
+    ``polygon`` carries the region's bubble outline when the unit is a single region that has one,
+    so the compositor can fit text to the bubble *shape* (SG-6); ``None`` for box-only placement.
+    """
 
     text: str
     bbox: BBox
     preset: str
+    polygon: tuple[Point, ...] | None = None
 
 
 class CompositeResult(Protocol):
@@ -235,8 +240,18 @@ def page_placements(
         if unit_regions[0].type in skip_types:
             continue
         preset = _TYPE_PRESETS.get(unit_regions[0].type, "default")
+        # Fit to the bubble shape only for a single-region unit that carries a polygon (SG-6); a
+        # chained/merged unit spans several boxes, so it stays a plain box fit over their union.
+        polygon: tuple[Point, ...] | None = None
+        if len(unit_regions) == 1 and unit_regions[0].polygon:
+            polygon = tuple(unit_regions[0].polygon)
         placements.append(
-            PagePlacement(text=text, bbox=BBox.union(r.bbox for r in unit_regions), preset=preset)
+            PagePlacement(
+                text=text,
+                bbox=BBox.union(r.bbox for r in unit_regions),
+                preset=preset,
+                polygon=polygon,
+            )
         )
     return placements
 
@@ -246,8 +261,9 @@ def _placements_fingerprint(placements: list[PagePlacement]) -> str:
     digest = hashlib.sha256()
     for placement in placements:
         b = placement.bbox
+        poly = ";".join(f"{p.x},{p.y}" for p in placement.polygon) if placement.polygon else ""
         digest.update(
-            f"{placement.preset}|{b.x},{b.y},{b.width},{b.height}|{placement.text}\n".encode()
+            f"{placement.preset}|{b.x},{b.y},{b.width},{b.height}|{poly}|{placement.text}\n".encode()
         )
     return digest.hexdigest()
 

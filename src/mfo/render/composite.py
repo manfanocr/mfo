@@ -21,7 +21,7 @@ from typing import Any
 
 from PIL import Image
 
-from mfo.core.geometry import BBox
+from mfo.core.geometry import BBox, Point
 from mfo.render.typeset import (
     FontLoader,
     StylePreset,
@@ -34,11 +34,17 @@ from mfo.render.typeset import (
 
 @dataclass(frozen=True)
 class Placement:
-    """A translated string to set into ``box`` using ``preset`` (FR-34/35)."""
+    """A translated string to set into ``box`` using ``preset`` (FR-34/35).
+
+    ``polygon`` is the region's bubble outline (when known); given it, the text is fit to the bubble
+    *shape* rather than the box, so it stays inside round/irregular bubbles (SG-6). ``None`` keeps a
+    plain box fit.
+    """
 
     text: str
     box: BBox
     preset: StylePreset
+    polygon: tuple[Point, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -81,7 +87,13 @@ def composite_page(
     canvas = base.convert("RGB")
     placed: list[PlacedText] = []
     for placement in placements:
-        layout = fit_text(placement.text, placement.box, placement.preset, load_font=load_font)
+        layout = fit_text(
+            placement.text,
+            placement.box,
+            placement.preset,
+            polygon=placement.polygon,
+            load_font=load_font,
+        )
         tile = render_layout(layout, load_font=load_font)
         canvas.paste(tile, (round(placement.box.x), round(placement.box.y)), tile)
         placed.append(PlacedText(placement, layout))

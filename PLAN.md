@@ -438,13 +438,20 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
   (after group+OCR; mask depends on it in skip mode). Offline defaults, so the core path is
   unchanged for non-SFX projects (I-7). USER_GUIDE + DATA_MODEL. See CHANGELOG.
 
-### Batch 8.8 — Bubble-shape-aware text wrapping (SG-6)
+### Batch 8.8 — Bubble-shape-aware text wrapping (SG-6) ✅ *(landed 2026-06-04)*
 - **Scope:** When a region carries a polygon (the `Region.polygon` field exists), wrap and fit text
   to the **bubble shape** rather than its bounding box in the render font-fitter (5.2), reducing
   text that visually spills outside round/irregular bubbles.
 - **Satisfies:** SG-6; FR-34, FR-35, NFR-3.
 - **DoD:** Text fits inside a non-rectangular polygon sample without crossing the bubble outline;
   rectangular regions render identically to today (no regression).
+- **Shipped:** `mfo.render.shape` (`scanline_span`/`band_inner` — the polygon's interior width at a
+  line's vertical band); `fit_text(..., polygon=)` follows the bubble shape (per-line variable-width
+  wrap, vertically-centred, line count settled over bounded passes) and records per-line `line_bands`
+  + `y_start` on `TextLayout`; `render_layout` aligns each line within its own band. `Placement`/
+  `PagePlacement` carry the polygon; `page_placements` passes a single-region unit's `Region.polygon`
+  through (chained units stay box-fit), folded into the render cache signature. No polygon → the box
+  path is untouched and byte-identical (no regression). USER_GUIDE + DATA_MODEL. See CHANGELOG.
 
 ### Batch 8.9 — LLM OCR correction (SG-7)
 - **Scope:** An **opt-in** assist path (built on the M7 AI layer) that proposes corrections for
@@ -484,7 +491,7 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
 - [x] M6 Review Editor *(MVP complete — M0–M6 satisfy the DoD §21)*
 - [x] M7 AI Refinement *(7.1 assist adapter, 7.2 modes, 7.3 confidence-driven review)*
 - [ ] M8 Hardening & Stretch *(planned into batches 8.0–8.11; 8.0 fused detect+recognize, 8.1 parallel processing, 8.2 archive import, 8.3 plugin system, 8.4 panel-aware context, 8.5 cross-volume glossary, 8.6 per-series style presets, 8.7 SFX
-detection & transliteration landed)*
+detection & transliteration, 8.8 bubble-shape-aware wrapping landed)*
 
 When a batch lands: tick it, and append a dated entry to [CHANGELOG.md](CHANGELOG.md) with the
 spec IDs it satisfied.

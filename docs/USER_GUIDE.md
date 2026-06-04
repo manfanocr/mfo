@@ -266,6 +266,18 @@ exactly as before.
 
 ---
 
+## Bubble-shape-aware text fitting (SG-6)
+
+A round or oval bubble is widest across its middle and narrows toward the top and bottom, so text fit
+to the bounding *box* can spill over the curved edge. When a region carries a bubble **outline** (its
+`polygon`), `mfo render`/`mfo export` automatically fit the text to the bubble *shape* instead — each
+line is wrapped to the polygon's interior width at that line's height, and the block is centred where
+the bubble is widest. There's nothing to turn on: it happens whenever a region has a polygon (a
+detector that emits outlines, or a hand-drawn region in the editor). Regions with only a box render
+exactly as before, so nothing regresses.
+
+---
+
 ## AI-assisted refinement (`mfo assist`)
 
 An **optional** layer that uses an LLM to refine your translations — more natural phrasing, a

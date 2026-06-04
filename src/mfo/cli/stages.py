@@ -97,7 +97,10 @@ def composite_page_file(base_path: Path, placements: list[PagePlacement]) -> Com
     """
     return composite_file(
         base_path,
-        [Placement(text=p.text, box=p.bbox, preset=get_preset(p.preset)) for p in placements],
+        [
+            Placement(text=p.text, box=p.bbox, preset=get_preset(p.preset), polygon=p.polygon)
+            for p in placements
+        ],
     )
 
 

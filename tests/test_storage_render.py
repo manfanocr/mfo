@@ -181,6 +181,26 @@ def test_skip_types_leaves_sfx_untouched(tmp_path: Path) -> None:
         assert artifacts[0].params["regions"] == 1
 
 
+def test_page_placements_carry_a_single_regions_polygon(tmp_path: Path) -> None:
+    # SG-6: a single-region unit with a bubble outline passes that polygon to the compositor.
+    from mfo.core.geometry import Point
+
+    with _project_with_page(tmp_path / "proj", tmp_path / "src") as store:
+        page = store.db.list(Page)[0]
+        poly = [Point(x=2, y=2), Point(x=10, y=6), Point(x=2, y=10)]
+        shaped = Region(
+            page_id=page.id,
+            bbox=BBox(x=2, y=2, width=8, height=8),
+            reading_order_index=0,
+            polygon=poly,
+        )
+        store.db.save(shaped)
+        _add_unit(store, page, shaped, "hi")
+
+        placements = page_placements(store, page)
+        assert placements[0].polygon == tuple(poly)
+
+
 def test_redetecting_regions_invalidates_the_mask(tmp_path: Path) -> None:
     with _project_with_page(tmp_path / "proj", tmp_path / "src") as store:
         page = store.db.list(Page)[0]

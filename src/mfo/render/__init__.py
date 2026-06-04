@@ -18,6 +18,7 @@ from mfo.render.mask import (
     mask_image,
     restore,
 )
+from mfo.render.shape import band_inner, scanline_span
 from mfo.render.typeset import (
     DEFAULT_PRESET,
     PRESETS,
@@ -54,6 +55,9 @@ __all__ = [
     "fit_text",
     "render_layout",
     "typeset",
+    # shape (bubble-aware fitting, SG-6)
+    "band_inner",
+    "scanline_span",
     # compositing
     "Placement",
     "PlacedText",

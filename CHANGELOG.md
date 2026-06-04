@@ -10,6 +10,24 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 
 ### M8 — Hardening & Stretch
 
+#### Added — Batch 8.8: Bubble-shape-aware text wrapping (2026-06-04)
+- **Text follows the bubble shape, not just its box.** When a region carries a polygon outline
+  (`Region.polygon`), the render font-fitter now wraps and fits text to the bubble *shape* so it stops
+  spilling over round/irregular bubble edges (SG-6). New `mfo.render.shape` (`scanline_span`,
+  `band_inner`) reports the polygon's interior width at each line's vertical band; `fit_text(...,
+  polygon=)` does a per-line variable-width wrap with the block vertically centred, settling the line
+  count over a few bounded passes (deterministic — NFR-26), and records per-line `line_bands` + a
+  `y_start` on `TextLayout`. `render_layout` aligns each line within its own band.
+- **Threaded through render.** `Placement` and `PagePlacement` carry the polygon; `page_placements`
+  passes a single-region unit's `Region.polygon` to the compositor (a chained/merged unit spans
+  several boxes, so it stays a plain box fit over their union), and the polygon is folded into the
+  render cache signature so a shape change re-renders.
+- **No regression for rectangular regions.** A region with no polygon takes the existing box-fit path
+  unchanged — `line_bands` is `None` and the render is byte-identical (DoD). Polygons aren't populated
+  by the current detectors yet, so existing projects render exactly as before; the path activates when
+  a detector (or a manual edit) supplies an outline. USER_GUIDE + DATA_MODEL. (SG-6; FR-34, FR-35,
+  NFR-3)
+
 #### Added — Batch 8.7: SFX detection & transliteration (2026-06-04)
 - **SFX is handled distinctly from dialogue.** A new opt-in `mfo sfx` stage classifies sound-effect
   regions and gives them their own transliteration, instead of translating onomatopoeia like speech
