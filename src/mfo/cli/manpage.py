@@ -9,8 +9,8 @@ is plain troff (man macros), so it needs no external tooling to build or view
 from __future__ import annotations
 
 import datetime as _dt
+from typing import Any
 
-import click
 import typer.main
 
 from mfo import __version__
@@ -55,28 +55,34 @@ def _esc(text: str) -> str:
     return text
 
 
-def _usage(path: str, command: click.Command) -> str:
+# A Click group exposes a ``commands`` dict; a leaf command does not. We duck-type on that rather
+# than ``isinstance`` so the generator is independent of *which* click Typer wraps (Typer 0.26 no
+# longer pins the standalone ``click`` package, and may use a different one than ``import click``).
+def _subcommands(command: Any) -> dict[str, Any] | None:
+    subs = getattr(command, "commands", None)
+    return subs if isinstance(subs, dict) else None
+
+
+def _usage(path: str, command: Any) -> str:
     """A one-line usage string: ``mfo <path> [OPTIONS] ARG [OPTIONAL]``."""
     parts = [f"mfo {path}".strip()]
     if any(p.param_type_name == "option" for p in command.params):
         parts.append("[OPTIONS]")
     for param in command.params:
-        if isinstance(param, click.Argument):
+        if param.param_type_name == "argument":
             name = param.name.upper() if param.name else "ARG"
             parts.append(name if param.required else f"[{name}]")
     return " ".join(parts)
 
 
-def _render_command(path: str, command: click.Command) -> list[str]:
+def _render_command(path: str, command: Any) -> list[str]:
     """Render one leaf command as a labelled paragraph with its options."""
     lines = [
         ".TP",
         f".B {_esc(_usage(path, command))}",
         _esc(command.get_short_help_str(limit=200)),
     ]
-    options = [
-        p for p in command.params if p.param_type_name == "option" and isinstance(p, click.Option)
-    ]
+    options = [p for p in command.params if p.param_type_name == "option"]
     if options:
         lines.append(".RS")
         for opt in options:
@@ -86,11 +92,12 @@ def _render_command(path: str, command: click.Command) -> list[str]:
     return lines
 
 
-def _walk(path: str, command: click.Command, out: list[str]) -> None:
+def _walk(path: str, command: Any, out: list[str]) -> None:
     """Emit ``command`` (and, for a group, each of its subcommands) in sorted order."""
-    if isinstance(command, click.Group):
-        for name in sorted(command.commands):
-            _walk(f"{path} {name}".strip(), command.commands[name], out)
+    subs = _subcommands(command)
+    if subs is not None:
+        for name in sorted(subs):
+            _walk(f"{path} {name}".strip(), subs[name], out)
     else:
         out.extend(_render_command(path, command))
 
@@ -98,6 +105,7 @@ def _walk(path: str, command: click.Command, out: list[str]) -> None:
 def render_manpage(*, date: str | None = None) -> str:
     """Return the full ``mfo.1`` troff source, introspected from the Typer app."""
     root = typer.main.get_command(app)
+    commands = _subcommands(root) or {}
     day = date or _dt.date.today().isoformat()
     lines = [
         f'.TH MFO 1 "{day}" "mfo {__version__}" "User Commands"',
@@ -110,9 +118,8 @@ def render_manpage(*, date: str | None = None) -> str:
         _DESCRIPTION,
         ".SH COMMANDS",
     ]
-    assert isinstance(root, click.Group)
-    for name in sorted(root.commands):
-        _walk(name, root.commands[name], lines)
+    for name in sorted(commands):
+        _walk(name, commands[name], lines)
 
     lines += [".SH ENVIRONMENT"]
     for var, desc in _ENVIRONMENT:
