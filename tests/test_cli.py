@@ -130,6 +130,18 @@ def test_run_executes_import_and_preprocess_end_to_end(tmp_path: Path) -> None:
     assert "[skip] preprocess" in again.stdout
 
 
+def test_run_with_unknown_stage_exits_nonzero(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    source = tmp_path / "src"
+    source.mkdir()
+    _make_png(source / "p1.png")
+    runner.invoke(app, ["import", str(target), str(source)])
+
+    result = runner.invoke(app, ["run", str(target), "--stage", "not-a-stage"])
+    assert result.exit_code == 1
+
+
 def test_import_creates_pages_and_status_reports_them(tmp_path: Path) -> None:
     target = tmp_path / "vol"
     runner.invoke(app, ["init", str(target)])

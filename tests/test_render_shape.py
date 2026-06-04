@@ -45,3 +45,27 @@ def test_band_inner_is_narrower_than_a_single_scanline() -> None:
 def test_band_inner_none_when_band_leaves_polygon() -> None:
     diamond = _diamond(50, 50, 40)
     assert band_inner(diamond, 45, 95) is None  # bottom of the band is past the lower vertex
+
+
+def test_scanline_span_degenerate_polygon_is_none() -> None:
+    # Fewer than three vertices can't enclose an interior.
+    assert scanline_span([Point(x=0, y=0), Point(x=10, y=0)], 0) is None
+
+
+def test_scanline_span_ignores_horizontal_edges() -> None:
+    # A square has horizontal top/bottom edges; a mid scanline still reports the full width.
+    square = [Point(x=0, y=0), Point(x=10, y=0), Point(x=10, y=10), Point(x=0, y=10)]
+    span = scanline_span(square, 5)
+    assert span == (0.0, 10.0)
+
+
+def test_band_inner_rejects_inverted_or_undersampled_band() -> None:
+    diamond = _diamond(50, 50, 40)
+    assert band_inner(diamond, 60, 40) is None  # y_bottom < y_top
+    assert band_inner(diamond, 40, 60, samples=1) is None  # need at least two scanlines
+
+
+def test_band_inner_none_when_interior_collapses() -> None:
+    diamond = _diamond(50, 50, 40)
+    # A band pinned at the very bottom vertex has no positive-width interior.
+    assert band_inner(diamond, 89, 90) is None

@@ -10,12 +10,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from mfo.cli import app
 from mfo.sample import create_sample_pages
 
 runner = CliRunner()
+
+
+def test_create_sample_pages_rejects_zero_count(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        create_sample_pages(tmp_path, count=0)
 
 
 def _run(*args: str) -> None:

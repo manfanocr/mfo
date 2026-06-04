@@ -424,6 +424,9 @@ def test_token_gates_the_api(tmp_path: Path) -> None:
         assert bearer.status_code == 200
         assert api.get("/api/project?token=s3cret").status_code == 200
         assert api.get("/api/project", headers={"X-Mfo-Token": "wrong"}).status_code == 401
+        # A differing-length / empty token is rejected (constant-time compare, no crash).
+        assert api.get("/api/project", headers={"X-Mfo-Token": ""}).status_code == 401
+        assert api.get("/api/project", headers={"X-Mfo-Token": "s3cret-plus"}).status_code == 401
 
 
 def test_stale_write_returns_409(client: tuple[TestClient, ProjectStore]) -> None:
