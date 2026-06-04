@@ -14,9 +14,12 @@ Top-level container. `model_versions` records the OCR/translate/render backend v
 for reproducibility (NFR-26/27).
 
 ### Page
-`id · project_id · index · image_path · width · height · preprocessing`
+`id · project_id · index · image_path · width · height · preprocessing · review_rev`
 One source image. `image_path` points at the **read-only original** (I-1). `preprocessing`
 holds derived-image metadata (cache refs, deskew/orientation), never overwriting the original.
+`review_rev` is a monotonic optimistic-concurrency counter for collaborative review (SG-8): it
+advances on every committed review mutation and on undo/redo and is never reverted, so a mutation
+carrying a stale revision can be detected and rejected (a 409 conflict) rather than silently lost.
 
 ### Region
 `id · page_id · bbox|polygon · type · reading_order_index · panel_index · confidence · status`
@@ -51,6 +54,13 @@ lets the UI show edit history (FR-26, §13.2). Never deleted — corrections are
 `id · page_id · output_path · params`
 A produced page render with the exact parameters used (font, fit, mask settings) for
 reproducibility.
+
+### Assignment
+`id · page_id · editor · timestamp`
+A reviewer's **claim** on a page, for basic collaborative assignment during LAN review (SG-10): at
+most one per page (a new claim replaces any prior one). Lightweight, ephemeral coordination state —
+it records *who is working where*, never page content, so it is deliberately **outside** the undo/redo
+history and never affects render/export. Stored in its own SQLite table (`assignments`).
 
 ### SeriesGlossary (cross-volume, out-of-project)
 `name · entries[]` (each `source · target · aliases · notes`)
@@ -87,7 +97,8 @@ serializes (FR-43).
 - **`manifest.json`** — human-readable project header: id, name, langs, config, model versions,
   page order. Easy to diff and inspect.
 - **SQLite (`project.db`)** — relational + high-churn data: regions, OCR spans, translation
-  units, edit records, render artifacts. Indexed by `page_id` / `region_id` for fast review.
+  units, edit records, render artifacts, undo/redo history entries, and page assignments. Indexed
+  by `page_id` / `region_id` for fast review.
 - **Cache dirs** — content-hashed intermediate outputs (preprocessed images, masks, detector
   outputs) for skip-if-unchanged (NFR-7/8/26).
 

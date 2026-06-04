@@ -19,8 +19,11 @@ from typing import Any
 
 from mfo.storage.project import ProjectStore
 from mfo.ui.review import (
+    ConflictError,
     NotFoundError,
     accept_ocr_alternative,
+    assignments_view,
+    claim_page,
     create_region,
     delete_region,
     edit_translation,
@@ -33,6 +36,7 @@ from mfo.ui.review import (
     project_summary,
     promote_term_to_series,
     redo_edit,
+    release_page,
     reocr_region,
     reorder_regions,
     rerender_page,
@@ -46,7 +50,7 @@ from mfo.ui.review import (
 )
 
 try:
-    from fastapi import FastAPI, HTTPException, Request
+    from fastapi import FastAPI, Header, HTTPException, Request
     from fastapi.responses import FileResponse, JSONResponse
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel
@@ -148,6 +152,30 @@ class OcrAlternative(BaseModel):
     text: str
 
 
+# -- collaborative review headers (SG-8/SG-10) --------------------------------------------
+#
+# These optional request headers carry the collaboration metadata: who is editing (for per-user
+# attribution in the edit log and history) and which page revision the client last saw (for
+# optimistic-concurrency conflict detection). Both default to the single-user behaviour, so a
+# non-collaborative client is unaffected.
+EDITOR_HEADER = "X-Mfo-Editor"
+PAGE_REV_HEADER = "X-Mfo-Page-Rev"
+TOKEN_HEADER = "X-Mfo-Token"
+
+
+def _editor(value: str | None) -> str:
+    """The reviewer's name from the editor header, or the default ``user`` (FR-42 attribution)."""
+    return value.strip() if value and value.strip() else "user"
+
+
+def _request_token(request: Request) -> str | None:
+    """Pull a shared review token from the request: Bearer auth, token header, or ``?token=``."""
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return auth[len("Bearer ") :]
+    return request.headers.get(TOKEN_HEADER) or request.query_params.get("token")
+
+
 # The OCR/translate engines a created region needs. Wired lazily from the project config so this
 # module never pulls in the heavy vision/language stacks at import (I-7/I-8); split out as a seam so
 # the create-region route can be tested with fakes instead of real engines.
@@ -187,17 +215,39 @@ def _region_engines(store: ProjectStore) -> RegionEngines:
     return recognize, translate, target_lang, style, load_effective_glossary(store)
 
 
-def create_app(store: ProjectStore) -> FastAPI:
+def create_app(store: ProjectStore, *, auth_token: str | None = None) -> FastAPI:
     """Build the review API bound to an open project ``store``.
 
     Read routes serve the page-editor data (§13.2); mutation routes apply edits that win over
     automation (I-3) and append edit records (FR-42). The caller owns the store's lifecycle.
+
+    When ``auth_token`` is set, every ``/api`` request must present it (Bearer auth, the
+    ``X-Mfo-Token`` header, or a ``?token=`` query param) — a lightweight gate for serving the
+    editor on a LAN (SG-8) while keeping it private by default (NFR-23/24). The static SPA shell is
+    always served so the browser can load it and then send the token on its API calls.
     """
     app = FastAPI(title="mfo review", version="1")
+
+    @app.middleware("http")
+    async def _require_token(request: Request, call_next: Any) -> Any:
+        gated = auth_token is not None and request.url.path.startswith("/api")
+        if gated and _request_token(request) != auth_token:
+            return JSONResponse(
+                status_code=401, content={"detail": "missing or invalid review token"}
+            )
+        return await call_next(request)
 
     @app.exception_handler(NotFoundError)
     async def _not_found(_: Request, exc: NotFoundError) -> JSONResponse:
         return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(ConflictError)
+    async def _conflict(_: Request, exc: ConflictError) -> JSONResponse:
+        # A stale write from another reviewer: reject with 409 so it isn't lost (SG-8, I-3).
+        return JSONResponse(
+            status_code=409,
+            content={"detail": str(exc), "page_id": exc.page_id, "current_rev": exc.actual},
+        )
 
     @app.exception_handler(ValueError)
     async def _bad_request(_: Request, exc: ValueError) -> JSONResponse:
@@ -225,39 +275,109 @@ def create_app(store: ProjectStore) -> FastAPI:
         return unit_view(store, unit_id)
 
     @app.put("/api/units/{unit_id}/translation")
-    def put_translation(unit_id: str, body: TranslationEdit) -> dict[str, Any]:
-        return edit_translation(store, unit_id, body.text, editor=body.editor)
+    def put_translation(
+        unit_id: str,
+        body: TranslationEdit,
+        x_mfo_editor: str | None = Header(default=None),
+        x_mfo_page_rev: int | None = Header(default=None),
+    ) -> dict[str, Any]:
+        return edit_translation(
+            store,
+            unit_id,
+            body.text,
+            editor=_editor(x_mfo_editor or body.editor),
+            expected_rev=x_mfo_page_rev,
+        )
 
     @app.post("/api/units/{unit_id}/select")
-    def post_select(unit_id: str, body: CandidateSelection) -> dict[str, Any]:
-        return select_candidate(store, unit_id, body.candidate_id, editor=body.editor)
+    def post_select(
+        unit_id: str,
+        body: CandidateSelection,
+        x_mfo_editor: str | None = Header(default=None),
+        x_mfo_page_rev: int | None = Header(default=None),
+    ) -> dict[str, Any]:
+        return select_candidate(
+            store,
+            unit_id,
+            body.candidate_id,
+            editor=_editor(x_mfo_editor or body.editor),
+            expected_rev=x_mfo_page_rev,
+        )
 
     # -- region operations (§13.3/13.4; FR-20/38/39/40); each returns the refreshed page view --
 
     @app.put("/api/regions/{region_id}/status")
-    def put_region_status(region_id: str, body: RegionStatusEdit) -> dict[str, Any]:
-        return set_region_status(store, region_id, body.status)
+    def put_region_status(
+        region_id: str,
+        body: RegionStatusEdit,
+        x_mfo_editor: str | None = Header(default=None),
+        x_mfo_page_rev: int | None = Header(default=None),
+    ) -> dict[str, Any]:
+        return set_region_status(
+            store, region_id, body.status, editor=_editor(x_mfo_editor), expected_rev=x_mfo_page_rev
+        )
 
     @app.put("/api/regions/{region_id}/bbox")
-    def put_region_bbox(region_id: str, body: RegionBBoxEdit) -> dict[str, Any]:
+    def put_region_bbox(
+        region_id: str,
+        body: RegionBBoxEdit,
+        x_mfo_editor: str | None = Header(default=None),
+        x_mfo_page_rev: int | None = Header(default=None),
+    ) -> dict[str, Any]:
         return move_region(
-            store, region_id, x=body.x, y=body.y, width=body.width, height=body.height
+            store,
+            region_id,
+            x=body.x,
+            y=body.y,
+            width=body.width,
+            height=body.height,
+            editor=_editor(x_mfo_editor),
+            expected_rev=x_mfo_page_rev,
         )
 
     @app.post("/api/regions/{region_id}/split")
-    def post_region_split(region_id: str, body: RegionSplit) -> dict[str, Any]:
-        return split_region(store, region_id, orientation=body.orientation, ratio=body.ratio)
+    def post_region_split(
+        region_id: str,
+        body: RegionSplit,
+        x_mfo_editor: str | None = Header(default=None),
+        x_mfo_page_rev: int | None = Header(default=None),
+    ) -> dict[str, Any]:
+        return split_region(
+            store,
+            region_id,
+            orientation=body.orientation,
+            ratio=body.ratio,
+            editor=_editor(x_mfo_editor),
+            expected_rev=x_mfo_page_rev,
+        )
 
     @app.post("/api/regions/merge")
-    def post_regions_merge(body: RegionMerge) -> dict[str, Any]:
-        return merge_regions(store, body.region_ids)
+    def post_regions_merge(
+        body: RegionMerge,
+        x_mfo_editor: str | None = Header(default=None),
+        x_mfo_page_rev: int | None = Header(default=None),
+    ) -> dict[str, Any]:
+        return merge_regions(
+            store, body.region_ids, editor=_editor(x_mfo_editor), expected_rev=x_mfo_page_rev
+        )
 
     @app.delete("/api/regions/{region_id}")
-    def delete_region_route(region_id: str) -> dict[str, Any]:
-        return delete_region(store, region_id)
+    def delete_region_route(
+        region_id: str,
+        x_mfo_editor: str | None = Header(default=None),
+        x_mfo_page_rev: int | None = Header(default=None),
+    ) -> dict[str, Any]:
+        return delete_region(
+            store, region_id, editor=_editor(x_mfo_editor), expected_rev=x_mfo_page_rev
+        )
 
     @app.post("/api/pages/{page_id}/regions")
-    def post_create_region(page_id: str, body: RegionCreate) -> dict[str, Any]:
+    def post_create_region(
+        page_id: str,
+        body: RegionCreate,
+        x_mfo_editor: str | None = Header(default=None),
+        x_mfo_page_rev: int | None = Header(default=None),
+    ) -> dict[str, Any]:
         from mfo.core.enums import RegionType
         from mfo.language.translate import TranslatorDependencyError
         from mfo.vision.ocr import OcrDependencyError
@@ -281,27 +401,50 @@ def create_app(store: ProjectStore) -> FastAPI:
                 region_type=region_type,
                 style=style,
                 glossary=glossary,
+                editor=_editor(x_mfo_editor),
+                expected_rev=x_mfo_page_rev,
             )
         except (OcrDependencyError, TranslatorDependencyError) as exc:
             # The offline core works without these engines; surface a clear, actionable 503.
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.post("/api/regions/{region_id}/ocr")
-    def post_region_ocr(region_id: str) -> dict[str, Any]:
+    def post_region_ocr(
+        region_id: str,
+        x_mfo_editor: str | None = Header(default=None),
+        x_mfo_page_rev: int | None = Header(default=None),
+    ) -> dict[str, Any]:
         from mfo.vision.ocr import OcrDependencyError
 
         recognize, _translate, _target, _style, _glossary = _region_engines(store)
         try:
-            return reocr_region(store, region_id, recognize=recognize)
+            return reocr_region(
+                store,
+                region_id,
+                recognize=recognize,
+                editor=_editor(x_mfo_editor),
+                expected_rev=x_mfo_page_rev,
+            )
         except OcrDependencyError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.post("/api/ocr/{span_id}/accept")
-    def post_ocr_accept(span_id: str, body: OcrAlternative) -> dict[str, Any]:
-        return accept_ocr_alternative(store, span_id, body.text)
+    def post_ocr_accept(
+        span_id: str,
+        body: OcrAlternative,
+        x_mfo_editor: str | None = Header(default=None),
+        x_mfo_page_rev: int | None = Header(default=None),
+    ) -> dict[str, Any]:
+        return accept_ocr_alternative(
+            store, span_id, body.text, editor=_editor(x_mfo_editor), expected_rev=x_mfo_page_rev
+        )
 
     @app.post("/api/units/{unit_id}/translate")
-    def post_unit_translate(unit_id: str) -> dict[str, Any]:
+    def post_unit_translate(
+        unit_id: str,
+        x_mfo_editor: str | None = Header(default=None),
+        x_mfo_page_rev: int | None = Header(default=None),
+    ) -> dict[str, Any]:
         from mfo.language.translate import TranslatorDependencyError
         from mfo.vision.ocr import OcrDependencyError
 
@@ -314,13 +457,26 @@ def create_app(store: ProjectStore) -> FastAPI:
                 target_lang=target_lang,
                 style=style,
                 glossary=glossary,
+                editor=_editor(x_mfo_editor),
+                expected_rev=x_mfo_page_rev,
             )
         except (OcrDependencyError, TranslatorDependencyError) as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.put("/api/pages/{page_id}/order")
-    def put_page_order(page_id: str, body: RegionOrder) -> dict[str, Any]:
-        return reorder_regions(store, page_id, body.ordered_region_ids)
+    def put_page_order(
+        page_id: str,
+        body: RegionOrder,
+        x_mfo_editor: str | None = Header(default=None),
+        x_mfo_page_rev: int | None = Header(default=None),
+    ) -> dict[str, Any]:
+        return reorder_regions(
+            store,
+            page_id,
+            body.ordered_region_ids,
+            editor=_editor(x_mfo_editor),
+            expected_rev=x_mfo_page_rev,
+        )
 
     # -- undo / redo / history (§13; FR-42) --
 
@@ -335,6 +491,24 @@ def create_app(store: ProjectStore) -> FastAPI:
     @app.get("/api/history")
     def get_history(page_id: str | None = None) -> dict[str, Any]:
         return history_view(store, page_id=page_id)
+
+    # -- collaborative page assignment (SG-10): claim / release / list page claims --
+
+    @app.get("/api/assignments")
+    def get_assignments() -> dict[str, Any]:
+        return assignments_view(store)
+
+    @app.post("/api/pages/{page_id}/claim")
+    def post_page_claim(
+        page_id: str, x_mfo_editor: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        return claim_page(store, page_id, editor=_editor(x_mfo_editor))
+
+    @app.post("/api/pages/{page_id}/release")
+    def post_page_release(
+        page_id: str, x_mfo_editor: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        return release_page(store, page_id, editor=_editor(x_mfo_editor))
 
     # -- series glossary (SG-2/SG-3): promote a settled term into the shared cross-volume store --
 
@@ -367,11 +541,14 @@ def serve(
     *,
     host: str = "127.0.0.1",
     port: int = 8000,
+    auth_token: str | None = None,
 ) -> None:
     """Run the review editor locally with uvicorn (blocking) — the body of ``mfo review``.
 
-    Binds to localhost by default so the editor stays a local-first, offline tool (I-7/I-8); the
-    caller owns the store's lifecycle. uvicorn ships with the ``review`` extra.
+    Binds to localhost by default so the editor stays a local-first, offline tool (I-7/I-8); pass a
+    LAN-reachable ``host`` (e.g. ``0.0.0.0``) to share it with co-reviewers (SG-8) and an
+    ``auth_token`` to gate access. The caller owns the store's lifecycle. uvicorn ships with the
+    ``review`` extra.
     """
     try:
         import uvicorn
@@ -380,4 +557,4 @@ def serve(
             "The review editor needs uvicorn. Install it with:  pip install 'mfo[review]'"
         ) from exc
 
-    uvicorn.run(create_app(store), host=host, port=port, log_level="warning")
+    uvicorn.run(create_app(store, auth_token=auth_token), host=host, port=port, log_level="warning")

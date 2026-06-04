@@ -468,7 +468,7 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
   /api/ocr/{id}/accept` and a one-click **Use** button per alternative in the editor. Disabled by
   default; a project that never runs it is unaffected (I-7). USER_GUIDE + DATA_MODEL. See CHANGELOG.
 
-### Batch 8.10 — LAN & collaborative review (SG-8, SG-10)
+### Batch 8.10 — LAN & collaborative review (SG-8, SG-10) ✅ *(landed 2026-06-04)*
 - **Scope:** Serve the review editor on the local network (`mfo review --host`, optional token auth)
   and make concurrent review safe: per-user edit attribution (the `EditRecord.editor` and history
   from M6/B4 are the basis), optimistic-concurrency / conflict detection on mutations, and basic
@@ -476,6 +476,17 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
 - **Satisfies:** SG-8, SG-10; FR-37, FR-42, FR-49; NFR-16, NFR-23.
 - **DoD:** Two browsers on the LAN edit one project; edits are attributed per user; a stale write is
   rejected with a clear conflict rather than silently lost.
+- **Shipped:** `mfo review --host/--token` serves the editor on the LAN with an optional shared token
+  (Bearer / `X-Mfo-Token` / `?token=`), gating `/api` while leaving the SPA shell loadable; a
+  non-local host without a token warns. Optimistic concurrency via a monotonic `Page.review_rev`
+  (bumped on every committed mutation and on undo/redo, never reverted): a mutation carrying a stale
+  `X-Mfo-Page-Rev` is rejected with **409** instead of silently overwriting (I-3); the editor reloads
+  and asks the reviewer to redo. Per-user attribution from an `X-Mfo-Editor` header threads through
+  every mutation into the edit log + history. Basic assignment via a new `Assignment` entity
+  (migration 004) and `claim`/`release`/`assignments` routes — at most one claim per page, surfaced as
+  claim badges + a toolbar Claim/Release button. A reviewer-name field and conflict handling round out
+  the SPA. Localhost single-user use is unchanged (no token, no rev sent → no locking). USER_GUIDE +
+  DATA_MODEL. See CHANGELOG.
 
 ### Batch 8.11 — Packaging, model tooling & sample data
 - **Scope:** Installable distributions (pipx/wheels), a `mfo models` command to download & cache the
@@ -498,7 +509,8 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
 - [x] M6 Review Editor *(MVP complete — M0–M6 satisfy the DoD §21)*
 - [x] M7 AI Refinement *(7.1 assist adapter, 7.2 modes, 7.3 confidence-driven review)*
 - [ ] M8 Hardening & Stretch *(planned into batches 8.0–8.11; 8.0 fused detect+recognize, 8.1 parallel processing, 8.2 archive import, 8.3 plugin system, 8.4 panel-aware context, 8.5 cross-volume glossary, 8.6 per-series style presets, 8.7 SFX
-detection & transliteration, 8.8 bubble-shape-aware wrapping, 8.9 LLM OCR correction landed)*
+detection & transliteration, 8.8 bubble-shape-aware wrapping, 8.9 LLM OCR correction, 8.10 LAN &
+collaborative review landed)*
 
 When a batch lands: tick it, and append a dated entry to [CHANGELOG.md](CHANGELOG.md) with the
 spec IDs it satisfied.

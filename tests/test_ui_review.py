@@ -20,10 +20,12 @@ from mfo.core import (
 )
 from mfo.core.enums import CandidateKind, EditAction, RegionStatus, RegionType
 from mfo.core.geometry import BBox
-from mfo.storage import ProjectStore, import_pages, list_edits, translate_units
+from mfo.storage import ProjectStore, history, import_pages, list_edits, translate_units
 from mfo.ui import (
     NotFoundError,
     accept_ocr_alternative,
+    assignments_view,
+    claim_page,
     create_region,
     delete_region,
     edit_translation,
@@ -33,6 +35,7 @@ from mfo.ui import (
     page_render_path,
     page_view,
     project_summary,
+    release_page,
     reocr_region,
     reorder_regions,
     rerender_page,
@@ -43,6 +46,7 @@ from mfo.ui import (
     split_region,
     unit_view,
 )
+from mfo.ui.review import ConflictError
 from mfo.vision.ingest import discover_images
 
 
@@ -634,3 +638,81 @@ def test_page_render_path_before_render_raises(tmp_path: Path) -> None:
         page = store.db.list(Page)[0]
         with pytest.raises(NotFoundError):
             page_render_path(store, page.id)
+
+
+# -- collaborative review: optimistic concurrency, attribution, assignment (SG-8/SG-10) ----
+
+
+def test_page_view_carries_review_rev(tmp_path: Path) -> None:
+    with _project_with_unit(tmp_path / "proj", tmp_path / "src") as store:
+        page = store.db.list(Page)[0]
+        view = page_view(store, page.id)
+        assert view["review_rev"] == 0
+        # A mutation advances it, and the refreshed view reflects the bump.
+        region = store.db.list(Region)[0]
+        updated = set_region_status(store, region.id, "correct")
+        assert updated["review_rev"] == 1
+
+
+def test_stale_expected_rev_is_rejected(tmp_path: Path) -> None:
+    with _project_with_unit(tmp_path / "proj", tmp_path / "src") as store:
+        region = store.db.list(Region)[0]
+        # First reviewer edits at rev 0 → succeeds and bumps to rev 1.
+        set_region_status(store, region.id, "correct", expected_rev=0)
+        # Second reviewer still thinks it's rev 0 → conflict, the stale write is refused (I-3).
+        with pytest.raises(ConflictError) as excinfo:
+            set_region_status(store, region.id, "needs_review", expected_rev=0)
+        assert excinfo.value.actual == 1
+        # The losing edit did not take effect.
+        assert store.db.get(Region, region.id).status is RegionStatus.CORRECT  # type: ignore[union-attr]
+
+
+def test_none_expected_rev_skips_the_conflict_check(tmp_path: Path) -> None:
+    # A single-user client that doesn't send a revision keeps the original behaviour (no locking).
+    with _project_with_unit(tmp_path / "proj", tmp_path / "src") as store:
+        region = store.db.list(Region)[0]
+        set_region_status(store, region.id, "correct")
+        set_region_status(store, region.id, "needs_review")  # no expected_rev → applies fine
+        assert store.db.get(Region, region.id).status is RegionStatus.NEEDS_REVIEW  # type: ignore[union-attr]
+
+
+def test_editor_is_attributed_in_history(tmp_path: Path) -> None:
+    with _project_with_unit(tmp_path / "proj", tmp_path / "src") as store:
+        region = store.db.list(Region)[0]
+        set_region_status(store, region.id, "correct", editor="alice")
+        entries = history.history_list(store)
+        assert entries[0]["editor"] == "alice"
+
+
+def test_translation_edit_is_attributed(tmp_path: Path) -> None:
+    with _project_with_unit(tmp_path / "proj", tmp_path / "src") as store:
+        unit = _unit(store)
+        edit_translation(store, unit.id, "hola", editor="bob")
+        records = list_edits(store, unit.id)
+        assert records[-1].editor == "bob"
+
+
+def test_claim_and_release_page(tmp_path: Path) -> None:
+    with _project_with_unit(tmp_path / "proj", tmp_path / "src") as store:
+        page = store.db.list(Page)[0]
+        assert assignments_view(store)["assignments"] == []
+
+        view = claim_page(store, page.id, editor="alice")
+        first = view["assignments"][0]
+        assert first == {"page_id": page.id, "editor": "alice", "timestamp": first["timestamp"]}
+
+        # A second claim replaces the first (at most one per page).
+        view = claim_page(store, page.id, editor="bob")
+        owners = {a["page_id"]: a["editor"] for a in view["assignments"]}
+        assert owners == {page.id: "bob"}
+
+        view = release_page(store, page.id, editor="bob")
+        assert view["assignments"] == []
+
+
+def test_claim_unknown_page_raises(tmp_path: Path) -> None:
+    with (
+        _project_with_unit(tmp_path / "proj", tmp_path / "src") as store,
+        pytest.raises(NotFoundError),
+    ):
+        claim_page(store, "pg_missing", editor="alice")

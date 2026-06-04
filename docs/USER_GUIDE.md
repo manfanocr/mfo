@@ -340,6 +340,36 @@ off the core path and **not** part of `mfo run`; a project that never runs it is
 
 ---
 
+## Collaborative review on a LAN (`mfo review --host …`, SG-8/SG-10)
+
+By default `mfo review` binds to `127.0.0.1`, so only your machine can reach it. To let teammates on
+the same network review one project together, bind to a LAN-reachable host and (recommended) require a
+shared token:
+
+```bash
+# Share on the network with a token; reviewers open the printed /?token=… URL:
+mfo review <proj> --host 0.0.0.0 --token "$(openssl rand -hex 16)"
+```
+
+The token is required on every API call (sent automatically by the editor); the page itself stays
+loadable so a browser can pick the token up from the URL. Serving on a non-local host **without** a
+token prints a warning — anyone on the network could then edit. mfo never reaches the public internet
+for this; it's local-network only, private by default (NFR-23).
+
+Once shared, concurrent review is safe:
+
+- **Who edited what.** Set your name in the **reviewer** field (top bar); every edit you make is
+  attributed to it in the edit log and the undo/redo history.
+- **No silent overwrites.** Each page carries a revision; if two reviewers edit the same page, the
+  second save is rejected with a clear *"page changed"* conflict and the editor reloads to the latest
+  version so you can redo your change on top — approved work is never silently lost (I-3).
+- **Claiming pages.** Use the **Claim page** button (or the page badges) to signal you're working on a
+  page; others see who holds it and can take it over or you can release it when done.
+
+Single-user localhost review is completely unchanged — no token, no claims, no conflicts.
+
+---
+
 ## OCR engines (`mfo ocr --engine …`)
 
 | Name | Languages | Install |

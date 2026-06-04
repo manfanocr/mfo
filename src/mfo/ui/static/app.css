@@ -194,6 +194,22 @@ h2 {
   font-weight: 700;
 }
 
+/* Collaborative-review claim badge on a page row (SG-10): initials of who holds the page. */
+.claim-badge {
+  margin-left: 6px;
+  background: var(--border);
+  color: var(--fg);
+  border-radius: 10px;
+  padding: 0 7px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.claim-badge.mine {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
 /* -- canvas ------------------------------------------------------------------- */
 
 #canvas-viewport {
@@ -394,6 +410,30 @@ h2 {
   background: var(--accent);
   color: var(--accent-fg);
   border-color: var(--accent);
+}
+
+/* Collaborative review: reviewer-name input + page-claim toolbar button (SG-10). */
+.editor-name {
+  width: 110px;
+  padding: 5px 8px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+}
+
+#claim-btn.mine {
+  background: var(--good);
+  color: var(--accent-fg);
+  border-color: var(--good);
+}
+
+#claim-btn.taken {
+  background: var(--region-low);
+  color: #0b0d11;
+  border-color: var(--region-low);
 }
 
 .empty {

@@ -21,8 +21,27 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from mfo.core import HistoryEntry, OCRSpan, Region, TranslationUnit
+from mfo.core import HistoryEntry, OCRSpan, Page, Region, TranslationUnit
 from mfo.storage.project import ProjectStore
+
+
+def page_rev(store: ProjectStore, page_id: str) -> int:
+    """Current optimistic-concurrency revision of a page (0 if it has no edits or doesn't exist).
+
+    The revision bumps on every committed review mutation and on undo/redo (see :func:`_bump_rev`),
+    so two reviewers can detect a stale write: a mutation carrying an out-of-date revision is a
+    conflict (SG-8/SG-10). It is stored on the page itself and is never reverted by undo, so it only
+    ever moves forward.
+    """
+    page = store.db.get(Page, page_id)
+    return page.review_rev if page is not None else 0
+
+
+def _bump_rev(store: ProjectStore, page_id: str) -> None:
+    """Advance a page's review revision by one (no-op if the page no longer exists)."""
+    page = store.db.get(Page, page_id)
+    if page is not None:
+        store.db.save(page.model_copy(update={"review_rev": page.review_rev + 1}))
 
 
 def snapshot_page(store: ProjectStore, page_id: str) -> dict[str, Any]:
@@ -83,6 +102,7 @@ def record(
             after=after,
         )
     )
+    _bump_rev(store, page_id)  # a committed edit advances the page's concurrency revision
 
 
 def _entries(store: ProjectStore, page_id: str | None) -> list[HistoryEntry]:
@@ -102,6 +122,7 @@ def undo(store: ProjectStore, *, page_id: str | None = None) -> str | None:
     entry = max(pending, key=lambda e: e.seq)
     restore_page(store, entry.page_id, entry.before)
     store.db.save(entry.model_copy(update={"undone": True}))
+    _bump_rev(store, entry.page_id)  # restoring state is itself a change another reviewer must see
     return entry.page_id
 
 
@@ -113,6 +134,7 @@ def redo(store: ProjectStore, *, page_id: str | None = None) -> str | None:
     entry = min(undone, key=lambda e: e.seq)
     restore_page(store, entry.page_id, entry.after)
     store.db.save(entry.model_copy(update={"undone": False}))
+    _bump_rev(store, entry.page_id)
     return entry.page_id
 
 

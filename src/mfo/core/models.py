@@ -84,6 +84,10 @@ class Page(MfoModel):
     # LLM OCR-correction provenance (corrector id + threshold + spans sig), for cache/skip (NFR-8);
     # empty until the optional, opt-in OCR-correction layer runs (SG-7, I-7).
     ocr_correction: dict[str, Any] = Field(default_factory=dict)
+    # Optimistic-concurrency revision for collaborative review (SG-8/SG-10): bumped on every
+    # committed review mutation and on undo/redo so a stale write from another reviewer can be
+    # detected and rejected rather than silently lost. Monotonic and never reverted by undo.
+    review_rev: int = Field(default=0, ge=0)
 
 
 class Region(MfoModel):
@@ -190,3 +194,17 @@ class HistoryEntry(MfoModel):
     before: dict[str, Any] = Field(default_factory=dict)
     after: dict[str, Any] = Field(default_factory=dict)
     undone: bool = False
+
+
+class Assignment(MfoModel):
+    """A reviewer's claim on a page, for basic collaborative assignment (SG-10).
+
+    Lightweight, ephemeral collaboration state: at most one claim per page (keyed by ``page_id``),
+    so claiming a page replaces any prior claim. Deliberately *not* part of the page-edit graph or
+    the undo/redo history — it coordinates who is working where, it does not change page content.
+    """
+
+    id: str = Field(default_factory=partial(new_id, "asn"))
+    page_id: str
+    editor: str
+    timestamp: datetime = Field(default_factory=_utcnow)

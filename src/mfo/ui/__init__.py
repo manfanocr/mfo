@@ -9,8 +9,11 @@ requires FastAPI — keeping the offline core dependency-light (I-7/I-8). Import
 from __future__ import annotations
 
 from mfo.ui.review import (
+    ConflictError,
     NotFoundError,
     accept_ocr_alternative,
+    assignments_view,
+    claim_page,
     create_region,
     delete_region,
     edit_translation,
@@ -23,6 +26,7 @@ from mfo.ui.review import (
     project_summary,
     promote_term_to_series,
     redo_edit,
+    release_page,
     reocr_region,
     reorder_regions,
     rerender_page,
@@ -37,6 +41,10 @@ from mfo.ui.review import (
 
 __all__ = [
     "NotFoundError",
+    "ConflictError",
+    "assignments_view",
+    "claim_page",
+    "release_page",
     "project_summary",
     "page_view",
     "unit_view",

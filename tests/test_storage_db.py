@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from mfo.core import (
+    Assignment,
     BBox,
     EditAction,
     EditRecord,
@@ -53,10 +54,19 @@ def test_save_get_round_trip(tmp_path: Path) -> None:
                 action=EditAction.EDIT_TRANSLATION,
             ),
             RenderArtifact(page_id="pg_x", output_path="renders/000.png"),
+            Assignment(page_id="pg_x", editor="alice"),
         ]
         for entity in entities:
             db.save(entity)
             assert db.get(type(entity), entity.id) == entity
+
+
+def test_assignments_are_queryable_by_page(tmp_path: Path) -> None:
+    with Database.open(tmp_path / "project.db") as db:
+        db.save(Assignment(page_id="pg_1", editor="alice"))
+        db.save(Assignment(page_id="pg_2", editor="bob"))
+        claims = db.list(Assignment, where=("page_id", "pg_1"))
+        assert [a.editor for a in claims] == ["alice"]
 
 
 def test_get_missing_returns_none(tmp_path: Path) -> None:

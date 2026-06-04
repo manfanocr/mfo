@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from mfo.core import (
+    Assignment,
     OCRSpan,
     Page,
     Region,
@@ -70,6 +71,37 @@ _ORDER_LAST = 1 << 30
 
 class NotFoundError(LookupError):
     """A requested entity (page, unit, candidate) does not exist in the project."""
+
+
+class ConflictError(Exception):
+    """A review mutation was rejected because the page changed since the client last saw it.
+
+    Optimistic concurrency for collaborative review (SG-8/SG-10): a mutation may carry the page
+    revision the client last loaded; if another reviewer has since edited that page, the revisions
+    disagree and the stale write is rejected rather than silently overwriting their work (I-3).
+    """
+
+    def __init__(self, page_id: str, *, expected: int, actual: int) -> None:
+        super().__init__(
+            f"page {page_id!r} changed (you saw rev {expected}, current is {actual}); "
+            "reload and retry"
+        )
+        self.page_id = page_id
+        self.expected = expected
+        self.actual = actual
+
+
+def _guard_rev(store: ProjectStore, page_id: str, expected_rev: int | None) -> None:
+    """Reject a mutation whose ``expected_rev`` no longer matches the page's revision (SG-8).
+
+    ``None`` opts out of the check (single-user editing, or a non-collaborative client), preserving
+    the original behaviour. Otherwise a mismatch raises :class:`ConflictError`.
+    """
+    if expected_rev is None:
+        return
+    actual = history.page_rev(store, page_id)
+    if expected_rev != actual:
+        raise ConflictError(page_id, expected=expected_rev, actual=actual)
 
 
 # -- read views ---------------------------------------------------------------------------
@@ -253,6 +285,7 @@ def project_summary(store: ProjectStore, *, threshold: float = DEFAULT_THRESHOLD
                 "units": len(units),
                 "low_confidence": low,
                 "ai_flagged": ai_flagged,
+                "review_rev": page.review_rev,
             }
         )
 
@@ -291,6 +324,7 @@ def page_view(store: ProjectStore, page_id: str) -> dict[str, Any]:
         "image_path": page.image_path,
         "width": page.width,
         "height": page.height,
+        "review_rev": page.review_rev,
         "regions": [
             _region_payload(region, spans.get(region.id, []), ai_flags.get(region.id))
             for region in ordered
@@ -314,15 +348,22 @@ def page_image_path(store: ProjectStore, page_id: str) -> Path:
 
 
 def edit_translation(
-    store: ProjectStore, unit_id: str, text: str, *, editor: str = "user"
+    store: ProjectStore,
+    unit_id: str,
+    text: str,
+    *,
+    editor: str = "user",
+    expected_rev: int | None = None,
 ) -> dict[str, Any]:
     """Set a unit's translation to user-entered ``text`` in place (FR-37); records the edit.
 
     The text lands as a ``MANUAL`` candidate and becomes the selection, so automation preserves it
     (I-3). Repeated edits reuse the existing manual candidate rather than piling up duplicates; the
-    machine candidates stay as alternatives the user can revert to.
+    machine candidates stay as alternatives the user can revert to. ``expected_rev`` enables the
+    optimistic-concurrency check for collaborative review (SG-8).
     """
     unit = _require_unit(store, unit_id)
+    _guard_rev(store, unit.page_id, expected_rev)
     with history.record(store, unit.page_id, "edit_translation", editor=editor):
         before = selected_text(unit)
 
@@ -354,7 +395,12 @@ def edit_translation(
 
 
 def select_candidate(
-    store: ProjectStore, unit_id: str, candidate_id: str, *, editor: str = "user"
+    store: ProjectStore,
+    unit_id: str,
+    candidate_id: str,
+    *,
+    editor: str = "user",
+    expected_rev: int | None = None,
 ) -> dict[str, Any]:
     """Choose an existing candidate as the unit's translation (FR-49); records the edit.
 
@@ -365,6 +411,7 @@ def select_candidate(
     candidate = next((c for c in unit.candidates if c.id == candidate_id), None)
     if candidate is None:
         raise NotFoundError(f"no candidate {candidate_id!r} on unit {unit_id!r}")
+    _guard_rev(store, unit.page_id, expected_rev)
     with history.record(store, unit.page_id, "select_candidate", editor=editor):
         before = selected_text(unit)
         updated = unit.model_copy(update={"selected_candidate_id": candidate.id})
@@ -388,7 +435,14 @@ def select_candidate(
 # deterministic; a later re-render picks the change up via its placement signature (NFR-8).
 
 
-def set_region_status(store: ProjectStore, region_id: str, status: str) -> dict[str, Any]:
+def set_region_status(
+    store: ProjectStore,
+    region_id: str,
+    status: str,
+    *,
+    editor: str = "user",
+    expected_rev: int | None = None,
+) -> dict[str, Any]:
     """Flag a region correct / needs-review / ignore / manual (FR-40); a user edit wins (I-3).
 
     The flag persists on the region, so confidence-driven auto-flagging (which only touches ``AUTO``
@@ -400,12 +454,20 @@ def set_region_status(store: ProjectStore, region_id: str, status: str) -> dict[
     except ValueError:
         allowed = ", ".join(s.value for s in RegionStatus)
         raise ValueError(f"unknown region status {status!r}; allowed: {allowed}") from None
-    with history.record(store, region.page_id, "set_status"):
+    _guard_rev(store, region.page_id, expected_rev)
+    with history.record(store, region.page_id, "set_status", editor=editor):
         store.db.save(region.model_copy(update={"status": new_status}))
     return page_view(store, region.page_id)
 
 
-def accept_ocr_alternative(store: ProjectStore, span_id: str, text: str) -> dict[str, Any]:
+def accept_ocr_alternative(
+    store: ProjectStore,
+    span_id: str,
+    text: str,
+    *,
+    editor: str = "user",
+    expected_rev: int | None = None,
+) -> dict[str, Any]:
     """Adopt one of a span's alternative readings as its OCR text (SG-7); a human edit wins (I-3).
 
     The chosen alternative (e.g. an LLM OCR correction) becomes the span's ``text``; the previous
@@ -415,10 +477,11 @@ def accept_ocr_alternative(store: ProjectStore, span_id: str, text: str) -> dict
     region = _require_region(store, span.region_id)
     if text not in span.alternatives:
         raise ValueError(f"{text!r} is not an alternative of span {span_id!r}")
+    _guard_rev(store, region.page_id, expected_rev)
     # Swap: the accepted reading becomes the text; the old text joins the alternatives (front).
     others = [alt for alt in span.alternatives if alt != text]
     new_alternatives = [span.text, *others] if span.text and span.text not in others else others
-    with history.record(store, region.page_id, "accept_ocr_alternative"):
+    with history.record(store, region.page_id, "accept_ocr_alternative", editor=editor):
         store.db.save(span.model_copy(update={"text": text, "alternatives": new_alternatives}))
     return page_view(store, region.page_id)
 
@@ -445,20 +508,34 @@ def promote_term_to_series(store: ProjectStore, source: str) -> dict[str, Any]:
 
 
 def move_region(
-    store: ProjectStore, region_id: str, *, x: float, y: float, width: float, height: float
+    store: ProjectStore,
+    region_id: str,
+    *,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    editor: str = "user",
+    expected_rev: int | None = None,
 ) -> dict[str, Any]:
     """Reposition and resize a region's bounding box (FR-38). Re-render reflows text into it."""
     region = _require_region(store, region_id)
     if width < 0 or height < 0:
         raise ValueError("region width and height must be non-negative")
     bbox = BBox(x=x, y=y, width=width, height=height)
-    with history.record(store, region.page_id, "move_region"):
+    _guard_rev(store, region.page_id, expected_rev)
+    with history.record(store, region.page_id, "move_region", editor=editor):
         store.db.save(region.model_copy(update={"bbox": bbox}))
     return page_view(store, region.page_id)
 
 
 def reorder_regions(
-    store: ProjectStore, page_id: str, ordered_region_ids: list[str]
+    store: ProjectStore,
+    page_id: str,
+    ordered_region_ids: list[str],
+    *,
+    editor: str = "user",
+    expected_rev: int | None = None,
 ) -> dict[str, Any]:
     """Apply a manual reading-order correction to a page (FR-20).
 
@@ -469,13 +546,20 @@ def reorder_regions(
     by_id = {region.id: region for region in store.db.list(Region, where=("page_id", page_id))}
     if set(ordered_region_ids) != set(by_id):
         raise ValueError("ordered_region_ids must be a permutation of the page's regions")
-    with history.record(store, page_id, "reorder"):
+    _guard_rev(store, page_id, expected_rev)
+    with history.record(store, page_id, "reorder", editor=editor):
         _reindex(store, [by_id[rid] for rid in ordered_region_ids])
     return page_view(store, page_id)
 
 
 def split_region(
-    store: ProjectStore, region_id: str, *, orientation: str = "horizontal", ratio: float = 0.5
+    store: ProjectStore,
+    region_id: str,
+    *,
+    orientation: str = "horizontal",
+    ratio: float = 0.5,
+    editor: str = "user",
+    expected_rev: int | None = None,
 ) -> dict[str, Any]:
     """Split a region into two adjacent regions (FR-39).
 
@@ -488,6 +572,7 @@ def split_region(
     if orientation not in ("horizontal", "vertical"):
         raise ValueError("orientation must be 'horizontal' or 'vertical'")
     region = _require_region(store, region_id)
+    _guard_rev(store, region.page_id, expected_rev)
     b = region.bbox
     if orientation == "horizontal":
         cut = b.height * ratio
@@ -499,7 +584,7 @@ def split_region(
         second = BBox(x=b.x + cut, y=b.y, width=b.width - cut, height=b.height)
 
     new_region = Region(page_id=region.page_id, bbox=second, type=region.type, status=region.status)
-    with history.record(store, region.page_id, "split_region"):
+    with history.record(store, region.page_id, "split_region", editor=editor):
         store.db.save(region.model_copy(update={"bbox": first}))
         store.db.save(new_region)
 
@@ -519,7 +604,13 @@ def split_region(
     return page_view(store, region.page_id)
 
 
-def merge_regions(store: ProjectStore, region_ids: list[str]) -> dict[str, Any]:
+def merge_regions(
+    store: ProjectStore,
+    region_ids: list[str],
+    *,
+    editor: str = "user",
+    expected_rev: int | None = None,
+) -> dict[str, Any]:
     """Merge two or more regions on the same page into one (FR-39).
 
     The earliest region in reading order survives (keeping its id, type and status); its box grows
@@ -539,7 +630,8 @@ def merge_regions(store: ProjectStore, region_ids: list[str]) -> dict[str, Any]:
     others = [region for region in regions if region.id != survivor.id]
     merged_ids = {region.id for region in others}
 
-    with history.record(store, page_id, "merge_region"):
+    _guard_rev(store, page_id, expected_rev)
+    with history.record(store, page_id, "merge_region", editor=editor):
         for other in others:
             for span in store.db.list(OCRSpan, where=("region_id", other.id)):
                 store.db.save(span.model_copy(update={"region_id": survivor.id}))
@@ -560,7 +652,13 @@ def merge_regions(store: ProjectStore, region_ids: list[str]) -> dict[str, Any]:
     return page_view(store, page_id)
 
 
-def delete_region(store: ProjectStore, region_id: str) -> dict[str, Any]:
+def delete_region(
+    store: ProjectStore,
+    region_id: str,
+    *,
+    editor: str = "user",
+    expected_rev: int | None = None,
+) -> dict[str, Any]:
     """Delete a region the detector got wrong (FR-38/39); drops its OCR and detaches it from units.
 
     A unit left with no regions is removed too. The page's reading order is left contiguous so a
@@ -568,7 +666,8 @@ def delete_region(store: ProjectStore, region_id: str) -> dict[str, Any]:
     """
     region = _require_region(store, region_id)
     page_id = region.page_id
-    with history.record(store, page_id, "delete_region"):
+    _guard_rev(store, page_id, expected_rev)
+    with history.record(store, page_id, "delete_region", editor=editor):
         store.db.delete(OCRSpan, where=("region_id", region.id))
         for unit in store.db.list(TranslationUnit, where=("page_id", page_id)):
             if region.id not in unit.ordered_region_ids:
@@ -656,6 +755,8 @@ def create_region(
     style: TranslationStyle = TranslationStyle.BALANCED,
     glossary: Sequence[GlossaryEntry] = (),
     window: int = DEFAULT_NEIGHBOR_WINDOW,
+    editor: str = "user",
+    expected_rev: int | None = None,
 ) -> dict[str, Any]:
     """Add a user-drawn region, OCR its crop, and translate it immediately (FR-38; §13.3).
 
@@ -667,6 +768,7 @@ def create_region(
     page = _require_page(store, page_id)
     if width <= 0 or height <= 0:
         raise ValueError("region width and height must be positive")
+    _guard_rev(store, page_id, expected_rev)
     bbox = BBox(x=x, y=y, width=width, height=height)
     # OCR + translation run before the history window opens (they don't touch the page state) so a
     # missing engine fails fast without leaving a half-applied region behind.
@@ -680,7 +782,7 @@ def create_region(
         confidence=translated.confidence,
     )
 
-    with history.record(store, page_id, "create_region"):
+    with history.record(store, page_id, "create_region", editor=editor):
         region = Region(page_id=page_id, bbox=bbox, type=region_type, status=RegionStatus.MANUAL)
         store.db.save(region)
         _reindex(store, _page_regions_in_order(store, page_id))  # new box sorts last; pin its index
@@ -749,12 +851,20 @@ def _attach_machine_candidate(
     )
 
 
-def reocr_region(store: ProjectStore, region_id: str, *, recognize: Recognize) -> dict[str, Any]:
+def reocr_region(
+    store: ProjectStore,
+    region_id: str,
+    *,
+    recognize: Recognize,
+    editor: str = "user",
+    expected_rev: int | None = None,
+) -> dict[str, Any]:
     """Re-run OCR on one region, replacing its spans (FR-12). Undoable; returns the page view."""
     region = _require_region(store, region_id)
     page = _require_page(store, region.page_id)
+    _guard_rev(store, region.page_id, expected_rev)
     result = recognize(store.layout.root / page.image_path, region.bbox)
-    with history.record(store, region.page_id, "reocr_region"):
+    with history.record(store, region.page_id, "reocr_region", editor=editor):
         store.db.delete(OCRSpan, where=("region_id", region.id))
         store.db.save(
             OCRSpan(
@@ -776,6 +886,8 @@ def retranslate_unit(
     style: TranslationStyle = TranslationStyle.BALANCED,
     glossary: Sequence[GlossaryEntry] = (),
     window: int = DEFAULT_NEIGHBOR_WINDOW,
+    editor: str = "user",
+    expected_rev: int | None = None,
 ) -> dict[str, Any]:
     """Re-run machine translation for one unit from its current OCR + page context (FR-21, I-3).
 
@@ -785,11 +897,12 @@ def retranslate_unit(
     """
     unit = _require_unit(store, unit_id)
     page = _require_page(store, unit.page_id)
+    _guard_rev(store, unit.page_id, expected_rev)
     source = _unit_source(store, unit)
     context = _unit_context(store, page, source, window=window, glossary=glossary, unit_id=unit.id)
     translated = translate(source, context)
     text = apply_glossary(translated.text, source, glossary)
-    with history.record(store, unit.page_id, "retranslate"):
+    with history.record(store, unit.page_id, "retranslate", editor=editor):
         updated = _attach_machine_candidate(
             unit, source, context, text=text, confidence=translated.confidence, style=style
         )
@@ -884,6 +997,48 @@ def redo_edit(store: ProjectStore, *, page_id: str | None = None) -> dict[str, A
 def history_view(store: ProjectStore, *, page_id: str | None = None) -> dict[str, Any]:
     """The history log for the requested scope (global, or one page), newest first."""
     return _history_payload(store, page_id=page_id)
+
+
+# -- collaborative page assignment (SG-10) ------------------------------------------------
+#
+# Basic "who is working where" coordination for LAN review: a reviewer can claim a page so others
+# see it is taken, and release it when done. At most one claim per page (a new claim replaces any
+# prior one). This is collaboration metadata, not page content — it is deliberately outside the
+# undo/redo history and never affects render/export.
+
+
+def _assignment_payload(assignment: Assignment) -> dict[str, Any]:
+    return {
+        "page_id": assignment.page_id,
+        "editor": assignment.editor,
+        "timestamp": assignment.timestamp.isoformat(),
+    }
+
+
+def assignments_view(store: ProjectStore) -> dict[str, Any]:
+    """All current page claims, keyed for the editor to badge claimed pages (SG-10)."""
+    assignments = sorted(store.db.list(Assignment), key=lambda a: a.page_id)
+    return {"assignments": [_assignment_payload(a) for a in assignments]}
+
+
+def _clear_page_claim(store: ProjectStore, page_id: str) -> None:
+    store.db.delete(Assignment, where=("page_id", page_id))
+
+
+def claim_page(store: ProjectStore, page_id: str, *, editor: str = "user") -> dict[str, Any]:
+    """Claim a page for ``editor``, replacing any prior claim on it (SG-10). Returns all claims."""
+    _require_page(store, page_id)
+    _clear_page_claim(store, page_id)
+    store.db.save(Assignment(page_id=page_id, editor=editor))
+    return assignments_view(store)
+
+
+def release_page(store: ProjectStore, page_id: str, *, editor: str = "user") -> dict[str, Any]:
+    """Release any claim on a page (SG-10). ``editor`` is accepted for symmetry but not enforced,
+    so a coordinator can always clear a stale claim. Returns the remaining claims."""
+    _require_page(store, page_id)
+    _clear_page_claim(store, page_id)
+    return assignments_view(store)
 
 
 # -- re-render preview (§13.3) ------------------------------------------------------------

@@ -138,6 +138,49 @@ def test_new_edit_truncates_the_redo_tail(tmp_path: Path) -> None:
         assert [e["action"] for e in entries] == ["b"]
 
 
+def test_page_rev_bumps_on_each_committed_edit(tmp_path: Path) -> None:
+    # Optimistic-concurrency revision (SG-8): every committed mutation advances it; a no-op doesn't.
+    with _store(tmp_path / "proj") as store:
+        page = _page(store)
+        region = _add_region(store, page, order=0)
+        assert history.page_rev(store, page.id) == 0
+
+        with history.record(store, page.id, "a"):
+            store.db.save(region.model_copy(update={"reading_order_index": 1}))
+        assert history.page_rev(store, page.id) == 1
+
+        with history.record(store, page.id, "noop"):
+            pass  # nothing changed → no history entry and no rev bump
+        assert history.page_rev(store, page.id) == 1
+
+        with history.record(store, page.id, "b"):
+            current = store.db.get(Region, region.id)
+            assert current is not None
+            store.db.save(current.model_copy(update={"reading_order_index": 2}))
+        assert history.page_rev(store, page.id) == 2
+
+
+def test_page_rev_advances_on_undo_and_redo(tmp_path: Path) -> None:
+    # Undo/redo also change page state, so they must move the revision forward (never revert it).
+    with _store(tmp_path / "proj") as store:
+        page = _page(store)
+        region = _add_region(store, page, order=0)
+        with history.record(store, page.id, "a"):
+            store.db.save(region.model_copy(update={"reading_order_index": 1}))
+        assert history.page_rev(store, page.id) == 1
+
+        history.undo(store, page_id=page.id)
+        assert history.page_rev(store, page.id) == 2  # rev is monotonic, not reverted
+
+        history.redo(store, page_id=page.id)
+        assert history.page_rev(store, page.id) == 3
+
+
+def test_page_rev_is_zero_for_unknown_page(tmp_path: Path) -> None:
+    with _store(tmp_path / "proj") as store:
+        assert history.page_rev(store, "pg_does_not_exist") == 0
+
+
 def test_history_survives_reopen(tmp_path: Path) -> None:
     with _store(tmp_path / "proj") as store:
         page = _page(store)

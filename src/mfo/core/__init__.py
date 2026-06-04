@@ -31,6 +31,7 @@ from mfo.core.glossary import (
 from mfo.core.grouping import group_regions
 from mfo.core.ids import new_id, new_ulid
 from mfo.core.models import (
+    Assignment,
     EditRecord,
     HistoryEntry,
     MfoModel,
@@ -142,6 +143,7 @@ __all__ = [
     "TranslationUnit",
     "EditRecord",
     "HistoryEntry",
+    "Assignment",
     "RenderArtifact",
     # pipeline
     "Pipeline",

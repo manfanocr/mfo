@@ -1245,10 +1245,25 @@ def export(
 @app.command()
 def review(
     path: Annotated[Path, typer.Argument(help="Project directory.")],
-    host: Annotated[str, typer.Option(help="Host to bind the local server to.")] = "127.0.0.1",
+    host: Annotated[
+        str,
+        typer.Option(help="Host to bind to. Use 0.0.0.0 to share on the LAN for review (SG-8)."),
+    ] = "127.0.0.1",
     port: Annotated[int, typer.Option(help="Port to serve on.")] = 8000,
+    token: Annotated[
+        str | None,
+        typer.Option(
+            help="Require this shared token on every API request (recommended when not on "
+            "localhost). Reviewers open the editor at /?token=<token>.",
+        ),
+    ] = None,
 ) -> None:
-    """Launch the local web review editor (FR-36; §13)."""
+    """Launch the local web review editor (FR-36; §13).
+
+    Bind to ``0.0.0.0`` to let co-reviewers on the same network open the editor (SG-8); pair it with
+    ``--token`` to gate access. Concurrent edits are attributed per reviewer and a stale write is
+    rejected with a conflict rather than silently overwriting another reviewer's work (SG-10, I-3).
+    """
     try:
         from mfo.ui.server import serve
     except ModuleNotFoundError as exc:
@@ -1263,10 +1278,16 @@ def review(
         typer.secho(f"No mfo project found at {path}.", fg=typer.colors.RED, err=True)
         typer.secho("Create one with:  mfo init <dir>", err=True)
         raise typer.Exit(code=1) from None
+    if host not in ("127.0.0.1", "localhost") and token is None:
+        typer.secho(
+            "Warning: serving on a non-local host without --token; anyone on the network can edit.",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
     try:
-        url = f"http://{host}:{port}"
+        url = f"http://{host}:{port}{f'/?token={token}' if token else ''}"
         typer.secho(f"mfo review serving {path} at {url}", fg=typer.colors.GREEN)
         typer.echo("Press Ctrl+C to stop.")
-        serve(store, host=host, port=port)
+        serve(store, host=host, port=port, auth_token=token)
     finally:
         store.close()

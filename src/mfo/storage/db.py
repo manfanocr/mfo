@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TypeVar
 
 from mfo.core import (
+    Assignment,
     EditRecord,
     HistoryEntry,
     OCRSpan,
@@ -49,6 +50,7 @@ _TABLES: dict[type[MfoModel], _Table] = {
     EditRecord: _Table("edit_records", {"translation_unit_id": "translation_unit_id"}),
     RenderArtifact: _Table("render_artifacts", {"page_id": "page_id"}),
     HistoryEntry: _Table("history_entries", {"page_id": "page_id", "seq": "seq"}),
+    Assignment: _Table("assignments", {"page_id": "page_id"}),
 }
 
 
@@ -100,8 +102,21 @@ def _migration_003(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS ix_history_entries_seq ON history_entries (seq)")
 
 
+def _migration_004(conn: sqlite3.Connection) -> None:
+    """Create the ``assignments`` table for collaborative page claims (SG-10).
+
+    A fresh database already has it (``_migration_001`` builds from the current table definitions);
+    existing databases pick it up here. ``CREATE TABLE IF NOT EXISTS`` keeps it idempotent.
+    """
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS assignments "
+        "(id TEXT PRIMARY KEY, data TEXT NOT NULL, page_id TEXT)"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_assignments_page_id ON assignments (page_id)")
+
+
 # Ordered list of migrations; the schema version is the number applied.
-_MIGRATIONS = [_migration_001, _migration_002, _migration_003]
+_MIGRATIONS = [_migration_001, _migration_002, _migration_003, _migration_004]
 SCHEMA_VERSION = len(_MIGRATIONS)
 
 

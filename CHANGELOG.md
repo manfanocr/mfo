@@ -10,6 +10,27 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 
 ### M8 — Hardening & Stretch
 
+#### Added — Batch 8.10: LAN & collaborative review (2026-06-04)
+- **Share the review editor on the local network, safely.** `mfo review --host 0.0.0.0` serves the
+  editor to co-reviewers on the same network (SG-8); `--token <t>` requires a shared token on every
+  `/api` request (accepted as `Authorization: Bearer`, the `X-Mfo-Token` header, or `?token=`) while
+  the SPA shell stays loadable so a browser can pick the token up from the URL. Serving on a non-local
+  host without a token prints a warning. Localhost single-user use is unchanged and needs neither
+  (private by default — NFR-23/24, I-7).
+- **Concurrent edits don't clobber each other (optimistic concurrency).** A new monotonic
+  `Page.review_rev` advances on every committed mutation *and* on undo/redo (it is never reverted — see
+  `mfo.storage.history.page_rev`). A mutation may carry the revision the client last saw via
+  `X-Mfo-Page-Rev`; if another reviewer edited the page first, the revisions disagree and the stale
+  write is rejected with **409 Conflict** (`ConflictError`) instead of silently overwriting approved
+  work (SG-8, I-3). The editor reloads the page to the latest version and asks the reviewer to redo.
+  Omitting the header opts out (single-user behaviour preserved).
+- **Per-user attribution + basic assignment (SG-10).** An `X-Mfo-Editor` header threads the reviewer's
+  name through every mutation into the edit log (`EditRecord.editor`) and undo/redo history. A new
+  `Assignment` entity (DB migration 004) records at most one claim per page; `claim_page`/`release_page`
+  and `GET /api/assignments` + `POST /api/pages/{id}/claim|release` back a toolbar **Claim/Release**
+  button and per-page claim badges in the editor, plus a reviewer-name field. (SG-8, SG-10; FR-37,
+  FR-42, FR-49; NFR-16, NFR-23) USER_GUIDE + DATA_MODEL.
+
 #### Added — Batch 8.9: LLM OCR correction (2026-06-04)
 - **An opt-in LLM proposes fixes for shaky OCR — as suggestions, never edits.** Built on the M7 AI
   plumbing: `mfo.language.ocr_correct` adds a pluggable `OcrCorrector` (NFR-17, new `mfo.ocr_correctors`

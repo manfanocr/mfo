@@ -31,6 +31,9 @@ const state = {
   centerOnClick: false, // recenter the canvas when a region is clicked (arrows always center)
   zoom: 1,
   pan: { x: 0, y: 0 },
+  editor: "user", // reviewer name, attributed on every edit (FR-42); persisted in localStorage
+  token: null, // shared review token for LAN access (sent on every request when set)
+  assignments: new Map(), // page_id -> editor who claimed it (SG-10)
 };
 
 // Resize handles around the selected region, and which box edges each one moves.
@@ -53,8 +56,30 @@ function el(tag, attrs = {}, children = []) {
   return node;
 }
 
+// Collaboration headers (SG-8/SG-10): the shared LAN token, the reviewer's name (per-user edit
+// attribution), and — on mutations — the revision of the page the client last saw, so the server
+// can reject a stale write rather than silently overwriting another reviewer (optimistic locking).
+function authHeaders({ withRev = false } = {}) {
+  const headers = {};
+  if (state.token) headers["X-Mfo-Token"] = state.token;
+  if (state.editor) headers["X-Mfo-Editor"] = state.editor;
+  if (withRev && state.page && typeof state.page.review_rev === "number") {
+    headers["X-Mfo-Page-Rev"] = String(state.page.review_rev);
+  }
+  return headers;
+}
+
+// Image/render endpoints are loaded via <img src=…>, which can't carry the token header — so the
+// token rides as a query param on those URLs when one is set (SG-8). Extra params can be appended.
+function mediaUrl(path, params = {}) {
+  const all = { ...params };
+  if (state.token) all.token = state.token;
+  const qs = new URLSearchParams(all).toString();
+  return qs ? `${path}?${qs}` : path;
+}
+
 async function getJSON(url) {
-  const res = await fetch(url);
+  const res = await fetch(url, { headers: authHeaders() });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json();
 }
@@ -62,7 +87,7 @@ async function getJSON(url) {
 async function sendJSON(method, url, body) {
   const res = await fetch(url, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders({ withRev: true }) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) {
@@ -71,6 +96,16 @@ async function sendJSON(method, url, body) {
       detail = (await res.json()).detail || detail;
     } catch {
       /* non-JSON error body */
+    }
+    // A 409 means another reviewer changed this page first: reload it so the user sees their work
+    // and can re-apply on top of the latest revision, rather than losing it (SG-8, I-3).
+    if (res.status === 409 && state.page) {
+      try {
+        await selectPage(state.page.page_id);
+      } catch {
+        /* best-effort reload */
+      }
+      throw new Error(`${detail} — reloaded to the latest version, please redo your edit.`);
     }
     throw new Error(detail);
   }
@@ -98,6 +133,7 @@ async function loadProject() {
   document.title = `${p.name} — mfo review`;
   $("#project-meta").textContent = `${p.name} · ${p.source_lang} → ${p.target_lang} · ${p.reading_direction}`;
   state.pages = data.pages;
+  await loadAssignments();
   renderPageList();
 
   const lowTotal = data.pages.reduce((n, pg) => n + pg.low_confidence, 0);
@@ -138,7 +174,9 @@ async function refreshProject() {
   try {
     const data = await getJSON("/api/project");
     state.pages = data.pages;
+    await loadAssignments(); // keep claim badges live as co-reviewers claim/release pages
     renderPageList();
+    renderClaim();
   } catch {
     /* a transient refresh failure shouldn't interrupt the edit that triggered it */
   }
@@ -154,6 +192,16 @@ function renderPageList() {
     ]);
     if (page.low_confidence > 0) {
       li.append(el("span", { class: "lc-badge", text: String(page.low_confidence) }));
+    }
+    const claimant = state.assignments.get(page.page_id);
+    if (claimant) {
+      li.append(
+        el("span", {
+          class: "claim-badge" + (claimant === state.editor ? " mine" : ""),
+          title: `Claimed by ${claimant}`,
+          text: claimant.slice(0, 2).toUpperCase(),
+        }),
+      );
     }
     if (state.page && page.page_id === state.page.page_id) li.classList.add("active");
     li.addEventListener("click", () => selectPage(page.page_id));
@@ -198,7 +246,7 @@ function applyPageView(view, keepSelectionId = null) {
   img.style.width = `${view.width}px`;
   img.style.height = `${view.height}px`;
   if (!samePage) {
-    img.src = `/api/pages/${view.page_id}/image`;
+    img.src = mediaUrl(`/api/pages/${view.page_id}/image`);
     hidePreview();
   }
   $("#canvas-empty").hidden = true;
@@ -206,6 +254,7 @@ function applyPageView(view, keepSelectionId = null) {
   drawRegions();
   if (!samePage) fitPage();
   renderInspector();
+  renderClaim();
 }
 
 function hasRegion(id) {
@@ -693,7 +742,7 @@ async function showPreview() {
     const info = await sendJSON("POST", `/api/pages/${state.page.page_id}/render`, {});
     const img = $("#render-preview");
     // Cache-bust so a re-render after edits actually reloads the image.
-    img.src = `${info.render_url}?t=${Date.now()}`;
+    img.src = mediaUrl(info.render_url, { t: Date.now() });
     img.style.width = `${state.page.width}px`;
     img.style.height = `${state.page.height}px`;
     img.hidden = false;
@@ -889,6 +938,79 @@ async function toggleHistory() {
 function toggleHistoryScope() {
   state.historyScope = state.historyScope === "global" ? "page" : "global";
   loadHistory();
+}
+
+// -- collaborative review: reviewer identity + page claims (SG-8/SG-10) --------------------
+
+function readEditorName() {
+  try {
+    return localStorage.getItem("mfo:editor") || "user";
+  } catch {
+    return "user";
+  }
+}
+
+function setEditorName(name) {
+  state.editor = name.trim() || "user";
+  try {
+    localStorage.setItem("mfo:editor", state.editor);
+  } catch {
+    /* storage may be unavailable */
+  }
+  renderPageList(); // re-badge "mine" claims under the new name
+  renderClaim();
+}
+
+async function loadAssignments() {
+  try {
+    const data = await getJSON("/api/assignments");
+    state.assignments = new Map(data.assignments.map((a) => [a.page_id, a.editor]));
+  } catch {
+    state.assignments = new Map();
+  }
+}
+
+// Reflect the current page's claim on the toolbar button (claim vs release, and by whom).
+function renderClaim() {
+  const btn = $("#claim-btn");
+  if (!btn) return;
+  if (!state.page) {
+    btn.hidden = true;
+    return;
+  }
+  btn.hidden = false;
+  const owner = state.assignments.get(state.page.page_id);
+  if (!owner) {
+    btn.textContent = "Claim page";
+    btn.title = "Claim this page so other reviewers know you're working on it";
+    btn.classList.remove("mine", "taken");
+  } else if (owner === state.editor) {
+    btn.textContent = "Release page";
+    btn.title = "You claimed this page — click to release it";
+    btn.classList.add("mine");
+    btn.classList.remove("taken");
+  } else {
+    btn.textContent = `Claimed: ${owner}`;
+    btn.title = `Claimed by ${owner} — click to take it over`;
+    btn.classList.add("taken");
+    btn.classList.remove("mine");
+  }
+}
+
+async function toggleClaim() {
+  if (!state.page) return;
+  const pageId = state.page.page_id;
+  const owner = state.assignments.get(pageId);
+  const release = owner === state.editor;
+  try {
+    const data = await sendJSON("POST", `/api/pages/${pageId}/${release ? "release" : "claim"}`, {});
+    state.assignments = new Map(data.assignments.map((a) => [a.page_id, a.editor]));
+    renderPageList();
+    renderClaim();
+    status(release ? "Released the page." : "Claimed the page.");
+  } catch (err) {
+    status(`Claim failed: ${err.message}`);
+  }
 }
 
 // -- zoom & pan (§13.5) -------------------------------------------------------------------
@@ -1216,6 +1338,21 @@ function init() {
     /* ignore */
   }
   $("#center-toggle").classList.toggle("active", state.centerOnClick);
+
+  // Collaboration setup: pick up the shared token from the URL (?token=…) and persist it, and the
+  // reviewer's name from localStorage, so every request is attributed and authorised (SG-8/SG-10).
+  try {
+    const urlToken = new URLSearchParams(location.search).get("token");
+    if (urlToken) localStorage.setItem("mfo:token", urlToken);
+    state.token = urlToken || localStorage.getItem("mfo:token");
+  } catch {
+    /* storage/URL may be unavailable */
+  }
+  state.editor = readEditorName();
+  const nameInput = $("#editor-name");
+  nameInput.value = state.editor;
+  nameInput.addEventListener("change", () => setEditorName(nameInput.value));
+  $("#claim-btn").addEventListener("click", toggleClaim);
 
   $("#zoom-in").addEventListener("click", () => setZoom(state.zoom * 1.2));
   $("#zoom-out").addEventListener("click", () => setZoom(state.zoom / 1.2));

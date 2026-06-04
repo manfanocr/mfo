@@ -407,3 +407,75 @@ def test_index_is_not_cached(client: tuple[TestClient, ProjectStore]) -> None:
     api, _ = client
     response = api.get("/")
     assert "no-cache" in response.headers.get("cache-control", "")
+
+
+# -- collaborative review: token auth, conflict detection, attribution, assignment (SG-8/10) --
+
+
+def test_token_gates_the_api(tmp_path: Path) -> None:
+    with _seed(tmp_path / "proj", tmp_path / "src") as store:
+        api = TestClient(create_app(store, auth_token="s3cret"))
+        # No token → 401; the static SPA shell stays reachable so the browser can load it.
+        assert api.get("/api/project").status_code == 401
+        assert api.get("/").status_code == 200
+        # Any of the accepted carriers unlocks the API.
+        assert api.get("/api/project", headers={"X-Mfo-Token": "s3cret"}).status_code == 200
+        bearer = api.get("/api/project", headers={"Authorization": "Bearer s3cret"})
+        assert bearer.status_code == 200
+        assert api.get("/api/project?token=s3cret").status_code == 200
+        assert api.get("/api/project", headers={"X-Mfo-Token": "wrong"}).status_code == 401
+
+
+def test_stale_write_returns_409(client: tuple[TestClient, ProjectStore]) -> None:
+    api, store = client
+    region = store.db.list(Region)[0]
+    # Edit at rev 0 → succeeds, page is now rev 1.
+    ok = api.put(
+        f"/api/regions/{region.id}/status",
+        json={"status": "correct"},
+        headers={"X-Mfo-Page-Rev": "0"},
+    )
+    assert ok.status_code == 200
+    assert ok.json()["review_rev"] == 1
+    # A second reviewer still on rev 0 is rejected rather than silently overwriting (SG-8, I-3).
+    stale = api.put(
+        f"/api/regions/{region.id}/status",
+        json={"status": "needs_review"},
+        headers={"X-Mfo-Page-Rev": "0"},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["current_rev"] == 1
+
+
+def test_editor_header_attributes_the_edit(client: tuple[TestClient, ProjectStore]) -> None:
+    api, store = client
+    region = store.db.list(Region)[0]
+    api.put(
+        f"/api/regions/{region.id}/status",
+        json={"status": "correct"},
+        headers={"X-Mfo-Editor": "alice"},
+    )
+    entries = api.get("/api/history").json()["entries"]
+    assert entries[0]["editor"] == "alice"
+
+
+def test_claim_and_release_routes(client: tuple[TestClient, ProjectStore]) -> None:
+    api, store = client
+    page = store.db.list(Page)[0]
+    assert api.get("/api/assignments").json()["assignments"] == []
+
+    claimed = api.post(f"/api/pages/{page.id}/claim", headers={"X-Mfo-Editor": "bob"})
+    assert claimed.status_code == 200
+    assert claimed.json()["assignments"][0] == {
+        "page_id": page.id,
+        "editor": "bob",
+        "timestamp": claimed.json()["assignments"][0]["timestamp"],
+    }
+
+    released = api.post(f"/api/pages/{page.id}/release", headers={"X-Mfo-Editor": "bob"})
+    assert released.json()["assignments"] == []
+
+
+def test_claim_unknown_page_is_404(client: tuple[TestClient, ProjectStore]) -> None:
+    api, _ = client
+    assert api.post("/api/pages/pg_missing/claim").status_code == 404
