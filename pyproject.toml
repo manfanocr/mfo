@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mfo"
-version = "0.0.0"
+dynamic = ["version"]
 description = "Manhua Fanyi OCR / Translation — a local-first manga/manhua OCR and context-aware translation pipeline"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -76,6 +76,11 @@ mfo = "mfo.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/mfo"]
 
+# Single source of truth for the version: read it from the package's __version__ so the wheel
+# metadata and `mfo --version` never drift apart.
+[tool.hatch.version]
+path = "src/mfo/__init__.py"
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
@@ -90,7 +95,9 @@ known-first-party = ["mfo"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
-files = ["src", "tests"]
+# Type-check the library strictly. Tests deliberately use loose fakes/partial protocol stand-ins,
+# so they are linted (ruff) but not strict-typed; the gate is `mypy src`.
+files = ["src"]
 
 # manga-ocr is an optional dependency (the `ocr` extra) and ships no type stubs.
 [[tool.mypy.overrides]]
