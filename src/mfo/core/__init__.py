@@ -15,6 +15,7 @@ from mfo.core.enums import (
     ReadingDirection,
     RegionStatus,
     RegionType,
+    SfxMode,
     TranslationStyle,
 )
 from mfo.core.geometry import BBox, Point
@@ -129,6 +130,7 @@ __all__ = [
     "ReadingDirection",
     "RegionStatus",
     "RegionType",
+    "SfxMode",
     "TranslationStyle",
     # models
     "MfoModel",

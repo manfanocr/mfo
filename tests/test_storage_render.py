@@ -155,6 +155,32 @@ def test_page_placements_skips_ignored_regions(tmp_path: Path) -> None:
         assert [p.text for p in placements] == ["kept"]
 
 
+def test_skip_types_leaves_sfx_untouched(tmp_path: Path) -> None:
+    # SG-5 "skip" mode: an SFX region is neither typeset nor masked, so its original art shows.
+    with _project_with_page(tmp_path / "proj", tmp_path / "src") as store:
+        page = store.db.list(Page)[0]
+        bubble = Region(
+            page_id=page.id, bbox=BBox(x=2, y=2, width=8, height=8), reading_order_index=0
+        )
+        sfx = Region(
+            page_id=page.id,
+            bbox=BBox(x=15, y=15, width=20, height=10),
+            type=RegionType.SFX,
+            reading_order_index=1,
+        )
+        store.db.save_all([bubble, sfx])
+        _add_unit(store, page, bubble, "hello")
+        _add_unit(store, page, sfx, "DOON")
+
+        skip = frozenset({RegionType.SFX})
+        placements = page_placements(store, page, skip_types=skip)
+        assert [p.text for p in placements] == ["hello"]  # SFX unit dropped
+
+        # Masking with the same skip set excludes the SFX box (1 region masked, not 2).
+        artifacts = mask_pages(store, mask=_mask, signature=_SIGNATURE, skip_types=skip)
+        assert artifacts[0].params["regions"] == 1
+
+
 def test_redetecting_regions_invalidates_the_mask(tmp_path: Path) -> None:
     with _project_with_page(tmp_path / "proj", tmp_path / "src") as store:
         page = store.db.list(Page)[0]

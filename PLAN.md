@@ -421,7 +421,7 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
   `mfo preset save/list/remove/apply`. Project-config wiring only, so unlinked projects are unchanged
   (offline core unaffected, I-7); no schema migration. USER_GUIDE + DATA_MODEL. See CHANGELOG.
 
-### Batch 8.7 — SFX detection & transliteration (SG-5)
+### Batch 8.7 — SFX detection & transliteration (SG-5) ✅ *(landed 2026-06-04)*
 - **Scope:** Classify SFX regions (the `RegionType.SFX` already exists) and handle them distinctly
   from dialogue: an optional transliteration/translation path producing an SFX-specific candidate, a
   per-project toggle to render, transliterate, or leave SFX untouched. A new detector/classifier
@@ -429,6 +429,14 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
 - **Satisfies:** SG-5; FR-11, FR-14; NFR-17.
 - **DoD:** SFX regions are typed and get a transliteration candidate; the render toggle is honored on
   a sample; dialogue handling is unchanged.
+- **Shipped:** `mfo.vision.sfx` (pluggable `SfxClassifier` + offline `HeuristicSfxClassifier`, new
+  `mfo.sfx_classifiers` group; promotes only `UNKNOWN`/auto regions — I-3); `mfo.language.transliterate`
+  (pluggable `Transliterator` + offline `KanaTransliterator`, new `mfo.transliterators` group);
+  `CandidateKind.SFX` + `SfxMode` (render/transliterate/skip); `mfo.storage.sfx.process_sfx`
+  (classify + attach/select SFX candidate, never over a human choice); render `skip_types` filter on
+  `mask_pages`/`page_placements`/`composite_pages`; `mfo sfx` CLI + `SfxStage` wired into `mfo run`
+  (after group+OCR; mask depends on it in skip mode). Offline defaults, so the core path is
+  unchanged for non-SFX projects (I-7). USER_GUIDE + DATA_MODEL. See CHANGELOG.
 
 ### Batch 8.8 — Bubble-shape-aware text wrapping (SG-6)
 - **Scope:** When a region carries a polygon (the `Region.polygon` field exists), wrap and fit text
@@ -475,7 +483,8 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
 - [x] M5 Render & Export
 - [x] M6 Review Editor *(MVP complete — M0–M6 satisfy the DoD §21)*
 - [x] M7 AI Refinement *(7.1 assist adapter, 7.2 modes, 7.3 confidence-driven review)*
-- [ ] M8 Hardening & Stretch *(planned into batches 8.0–8.11; 8.0 fused detect+recognize, 8.1 parallel processing, 8.2 archive import, 8.3 plugin system, 8.4 panel-aware context, 8.5 cross-volume glossary, 8.6 per-series style presets landed)*
+- [ ] M8 Hardening & Stretch *(planned into batches 8.0–8.11; 8.0 fused detect+recognize, 8.1 parallel processing, 8.2 archive import, 8.3 plugin system, 8.4 panel-aware context, 8.5 cross-volume glossary, 8.6 per-series style presets, 8.7 SFX
+detection & transliteration landed)*
 
 When a batch lands: tick it, and append a dated entry to [CHANGELOG.md](CHANGELOG.md) with the
 spec IDs it satisfied.

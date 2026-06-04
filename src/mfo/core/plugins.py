@@ -25,6 +25,8 @@ T = TypeVar("T")
 DETECTOR_GROUP = "mfo.detectors"
 OCR_GROUP = "mfo.ocr"
 TRANSLATOR_GROUP = "mfo.translators"
+TRANSLITERATOR_GROUP = "mfo.transliterators"
+SFX_CLASSIFIER_GROUP = "mfo.sfx_classifiers"
 ASSISTANT_GROUP = "mfo.assistants"
 RENDERER_GROUP = "mfo.renderers"
 

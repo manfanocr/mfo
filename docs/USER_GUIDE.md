@@ -240,6 +240,32 @@ exactly as before (the offline core is unaffected, I-7).
 
 ---
 
+## Sound effects / SFX (`mfo sfx`, SG-5)
+
+Onomatopoeia (ドーン, ばたん…) reads differently from dialogue — it's drawn art, often better
+*transliterated* than translated, and sometimes best left as the original art. `mfo sfx` handles SFX
+regions distinctly, **opt-in and fully offline by default**:
+
+```bash
+mfo sfx <proj> --mode transliterate   # romanize SFX (ドーン → "DOON") and typeset that
+mfo sfx <proj> --mode skip            # leave the original SFX art untouched (no mask, no text)
+mfo sfx <proj> --mode render          # (default) translate & typeset SFX like dialogue
+```
+
+It does two things: it **classifies** SFX regions (the offline `heuristic` classifier promotes a
+large, stretched, non-bubble region to `sfx` — a detector's label and your manual edits always win),
+and it attaches a **transliteration** as an `sfx` translation candidate to every SFX-led unit (the
+offline `kana` transliterator; swap either via `--classifier` / `--transliterator`, or a plugin).
+The transliteration candidate is always created so it's visible in review; only `--mode transliterate`
+*selects* it, and never over a translation you've chosen by hand (I-3).
+
+The `--mode` toggle is honored by `mfo render`, `mfo export`, and `mfo run`: in `skip` mode the mask
+and composite stages leave SFX regions alone so the original art shows through. SFX handling joins
+`mfo run` once both OCR and an SFX mode are configured; with no SFX configured, dialogue rendering is
+exactly as before.
+
+---
+
 ## AI-assisted refinement (`mfo assist`)
 
 An **optional** layer that uses an LLM to refine your translations — more natural phrasing, a

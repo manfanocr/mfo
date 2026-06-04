@@ -28,6 +28,12 @@ from mfo.language.translate import (
     deepl_translator,
     get_translator,
 )
+from mfo.language.transliterate import (
+    KanaTransliterator,
+    Transliterator,
+    get_transliterator,
+    kana_transliterator,
+)
 
 __all__ = [
     # translate
@@ -45,6 +51,11 @@ __all__ = [
     "argos_translator",
     "deepl_translator",
     "get_translator",
+    # transliterate (SFX, batch 8.7)
+    "KanaTransliterator",
+    "Transliterator",
+    "get_transliterator",
+    "kana_transliterator",
     # assist (AI layer, batch 7.1)
     "AiAssistant",
     "AiAssistantConfig",

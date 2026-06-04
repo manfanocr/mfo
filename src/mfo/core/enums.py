@@ -54,6 +54,15 @@ class CandidateKind(StrEnum):
     NATURAL = "natural"
     AI = "ai"  # AI-assisted rewrite
     MANUAL = "manual"  # human-entered
+    SFX = "sfx"  # SFX transliteration/translation (spec SG-5)
+
+
+class SfxMode(StrEnum):
+    """How SFX (sound-effect) regions are handled at render time (spec SG-5, §10.8)."""
+
+    RENDER = "render"  # translate & typeset SFX like dialogue (the default — unchanged behaviour)
+    TRANSLITERATE = "transliterate"  # typeset a transliteration of the SFX instead
+    SKIP = "skip"  # leave the original SFX art untouched (don't mask or typeset it)
 
 
 class AssistMode(StrEnum):

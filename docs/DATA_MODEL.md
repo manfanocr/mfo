@@ -34,7 +34,9 @@ alternate hypotheses when the engine provides them.
 ### TranslationUnit
 `id · ordered_region_ids · source_bundle · context_bundle · candidates · selected · style`
 A dialogue/logical unit grouping ≥1 region (FR-19). Translated **with context** (FR-22);
-`candidates` may include literal/natural/AI variants (spec §12.3); `selected` is the active one.
+`candidates` may include literal/natural/AI/**sfx** variants (spec §12.3; SG-5 adds the SFX
+transliteration candidate); `selected` is the active one. How SFX-led units render is set by the
+per-project `SfxMode` (`render`/`transliterate`/`skip`) in `Project.config["sfx"]`.
 
 ### EditRecord
 `id · translation_unit_id · before · after · action · editor · timestamp`

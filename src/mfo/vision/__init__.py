@@ -64,6 +64,14 @@ from mfo.vision.preprocess import (
     preprocess_file,
     preprocess_image,
 )
+from mfo.vision.sfx import (
+    HeuristicSfxClassifier,
+    SfxClassifier,
+    SfxFeatures,
+    classify_region_type,
+    get_sfx_classifier,
+    heuristic_sfx_classifier,
+)
 
 __all__ = [
     # detect
@@ -122,4 +130,11 @@ __all__ = [
     "estimate_skew_angle",
     "preprocess_file",
     "preprocess_image",
+    # sfx classification
+    "HeuristicSfxClassifier",
+    "SfxClassifier",
+    "SfxFeatures",
+    "classify_region_type",
+    "get_sfx_classifier",
+    "heuristic_sfx_classifier",
 ]

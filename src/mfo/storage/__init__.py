@@ -45,6 +45,12 @@ from mfo.storage.series import (
     load_series_glossary,
     save_series_glossary,
 )
+from mfo.storage.sfx import (
+    SfxResult,
+    classify_sfx_regions,
+    process_sfx,
+    transliterate_sfx_units,
+)
 from mfo.storage.translate import Translated, translate_units
 
 __all__ = [
@@ -99,6 +105,11 @@ __all__ = [
     "SERIES_PRESETS_VERSION",
     "load_series_presets",
     "save_series_presets",
+    # sfx (SG-5)
+    "SfxResult",
+    "classify_sfx_regions",
+    "process_sfx",
+    "transliterate_sfx_units",
     # grouping
     "group_into_units",
     # translate

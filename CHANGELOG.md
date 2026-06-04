@@ -10,6 +10,28 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 
 ### M8 — Hardening & Stretch
 
+#### Added — Batch 8.7: SFX detection & transliteration (2026-06-04)
+- **SFX is handled distinctly from dialogue.** A new opt-in `mfo sfx` stage classifies sound-effect
+  regions and gives them their own transliteration, instead of translating onomatopoeia like speech
+  (SG-5). `mfo.vision.sfx` adds a pluggable `SfxClassifier` (offline `HeuristicSfxClassifier`:
+  promotes a large, stretched, non-bubble `UNKNOWN` region to `RegionType.SFX`, never overriding a
+  detector label or a human edit — I-3) registered via the new `mfo.sfx_classifiers` entry-point
+  group; `mfo.language.transliterate` adds a pluggable `Transliterator` (offline `KanaTransliterator`:
+  kana→romaji with digraphs, small-tsu, and long-vowel handling — `ドーン` → "DOON") under the new
+  `mfo.transliterators` group. Both have offline defaults, so the core path stays offline (I-7/I-8).
+- **A per-project render toggle (`mfo sfx --mode`).** `SfxMode` ∈ {`render`, `transliterate`, `skip`}:
+  `render` (the default) keeps today's behaviour (SFX translated & typeset like dialogue); the SFX
+  pass attaches a new `CandidateKind.SFX` transliteration candidate to every SFX-led unit (always
+  available in review), and `transliterate` *selects* it — never over a human (MANUAL) choice (I-3);
+  `skip` leaves the original SFX art untouched — the mask and composite stages exclude SFX regions
+  (`mask_pages`/`page_placements`/`composite_pages` gained a `skip_types` filter, folded into their
+  cache signatures so toggling the mode re-runs them). Masking runs after the SFX classify when the
+  mode is `skip`, so SFX regions are typed before masking decides what to leave alone.
+- **Dialogue unchanged.** With no SFX configured the skip set is empty and bundles are byte-identical,
+  so non-SFX projects behave exactly as before. CLI: `mfo sfx [--mode --classifier --transliterator]`,
+  wired into `mfo run`, `mfo render`, and `mfo export`. USER_GUIDE + DATA_MODEL updated. (SG-5; FR-11,
+  FR-14; NFR-17; I-3)
+
 #### Added — Batch 8.6: Per-series style presets (2026-06-04)
 - **One named preset configures a new volume's look in a single step.** A series spans many volumes
   that should read and look the same; `mfo.core.presets.SeriesPreset` bundles the three per-series

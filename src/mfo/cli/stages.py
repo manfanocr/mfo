@@ -19,7 +19,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from mfo.core.enums import AssistMode, ReadingDirection, TranslationStyle
+from mfo.core.enums import AssistMode, ReadingDirection, RegionType, SfxMode, TranslationStyle
 from mfo.core.glossary import (
     GlossaryEntry,
     entries_from_config,
@@ -30,6 +30,7 @@ from mfo.core.grouping import DEFAULT_GAP_RATIO
 from mfo.core.pipeline import Pipeline, Stage
 from mfo.core.presets import SeriesPreset
 from mfo.language import TranslationRequest, Translator, get_translator
+from mfo.language.transliterate import Transliterator, get_transliterator
 from mfo.render import (
     CompositeArtifact,
     MaskConfig,
@@ -50,6 +51,7 @@ from mfo.storage import (
     mask_pages,
     ocr_regions,
     preprocess_pages,
+    process_sfx,
     translate_units,
 )
 from mfo.vision import (
@@ -58,11 +60,15 @@ from mfo.vision import (
     PageOrder,
     PreprocessConfig,
     RegionDetector,
+    SfxClassifier,
+    SfxFeatures,
+    classify_region_type,
     detect_file,
     detect_panels_file,
     discover_images,
     get_detector,
     get_ocr_engine,
+    get_sfx_classifier,
     is_archive,
     preprocess_file,
     recognize_file,
@@ -74,6 +80,7 @@ DETECT_STAGE = "detect"
 STRUCTURE_STAGE = "structure"
 GROUP_STAGE = "group"
 OCR_STAGE = "ocr"
+SFX_STAGE = "sfx"
 TRANSLATE_STAGE = "translate"
 RENDER_STAGE = "render"
 COMPOSITE_STAGE = "composite"
@@ -257,6 +264,56 @@ class OcrStage:
         )
 
 
+class SfxStage:
+    """Classify SFX regions and attach SFX transliterations (idempotent, offline by default; SG-5).
+
+    Needs the regions typed/grouped (to classify and to find SFX-led units) and the OCR text (to
+    transliterate), so it depends on both the group and OCR stages. The render-time toggle (render /
+    transliterate / skip) is honoured by the mask/composite stages; this stage only types regions
+    and produces the transliteration candidate.
+    """
+
+    name = SFX_STAGE
+    deps: tuple[str, ...] = (GROUP_STAGE, OCR_STAGE)
+
+    def __init__(
+        self,
+        classifier: SfxClassifier,
+        transliterator: Transliterator,
+        *,
+        source_lang: str,
+        mode: SfxMode,
+    ) -> None:
+        self._classifier = classifier
+        self._transliterator = transliterator
+        self._source_lang = source_lang
+        self._mode = mode
+
+    def inputs_hash(self, ctx: ProjectStore) -> str:
+        return (
+            f"sfx@1|{self._classifier.name}@{self._classifier.version}"
+            f"|{self._transliterator.name}@{self._transliterator.version}|{self._mode.value}"
+        )
+
+    def run(self, ctx: ProjectStore) -> None:
+        process_sfx(
+            ctx,
+            classify=lambda region, page: classify_region_type(
+                SfxFeatures(
+                    bbox=region.bbox,
+                    region_type=region.type,
+                    page_width=page.width,
+                    page_height=page.height,
+                ),
+                self._classifier,
+            ),
+            transliterate=lambda text: self._transliterator.transliterate(
+                text, source_lang=self._source_lang
+            ),
+            mode=self._mode,
+        )
+
+
 class TranslateStage:
     """Translate grouped units with context/glossary/style, storing candidates (idempotent)."""
 
@@ -324,18 +381,34 @@ class RenderStage:
     name = RENDER_STAGE
     deps: tuple[str, ...] = (DETECT_STAGE,)
 
-    def __init__(self, config: MaskConfig, *, jobs: int = 1) -> None:
+    def __init__(
+        self,
+        config: MaskConfig,
+        *,
+        skip_types: frozenset[RegionType] = frozenset(),
+        extra_deps: tuple[str, ...] = (),
+        jobs: int = 1,
+    ) -> None:
         self._config = config
+        self._skip_types = skip_types
+        # Masking must run after SFX classification when the SFX mode is "skip", so the SFX regions
+        # are typed before masking decides which boxes to leave untouched (SG-5). The CLI adds the
+        # SFX stage as an extra dependency in that case.
+        self.deps = (DETECT_STAGE, *extra_deps)
         self._jobs = jobs
 
+    def _skip_token(self) -> str:
+        return ",".join(sorted(t.value for t in self._skip_types))
+
     def inputs_hash(self, ctx: ProjectStore) -> str:
-        return self._config.signature()
+        return f"{self._config.signature()}|skip={self._skip_token()}"
 
     def run(self, ctx: ProjectStore) -> None:
         mask_pages(
             ctx,
             mask=lambda path, boxes: mask_file(path, boxes, self._config),
             signature=self._config.signature(),
+            skip_types=self._skip_types,
             jobs=self._jobs,
         )
 
@@ -350,15 +423,21 @@ class CompositeStage:
     name = COMPOSITE_STAGE
     deps: tuple[str, ...] = (RENDER_STAGE, TRANSLATE_STAGE)
 
-    def __init__(self, *, jobs: int = 1) -> None:
+    def __init__(self, *, skip_types: frozenset[RegionType] = frozenset(), jobs: int = 1) -> None:
+        self._skip_types = skip_types
         self._jobs = jobs
 
     def inputs_hash(self, ctx: ProjectStore) -> str:
-        return COMPOSITE_SIGNATURE
+        token = ",".join(sorted(t.value for t in self._skip_types))
+        return f"{COMPOSITE_SIGNATURE}|skip={token}"
 
     def run(self, ctx: ProjectStore) -> None:
         composite_pages(
-            ctx, composite=composite_page_file, signature=COMPOSITE_SIGNATURE, jobs=self._jobs
+            ctx,
+            composite=composite_page_file,
+            signature=COMPOSITE_SIGNATURE,
+            skip_types=self._skip_types,
+            jobs=self._jobs,
         )
 
 
@@ -464,6 +543,34 @@ def save_render_config(store: ProjectStore, config: MaskConfig) -> None:
     project_config = dict(store.project.config)
     project_config["render"] = {"pad": config.pad, "border": config.border}
     store.set_project(store.project.model_copy(update={"config": project_config}))
+
+
+def save_sfx_config(
+    store: ProjectStore,
+    *,
+    mode: SfxMode,
+    classifier: str = "heuristic",
+    transliterator: str = "kana",
+) -> None:
+    """Persist the SFX mode + adapters so ``mfo run`` reproduces SFX handling (SG-5, FR-48)."""
+    project_config = dict(store.project.config)
+    project_config["sfx"] = {
+        "mode": mode.value,
+        "classifier": classifier,
+        "transliterator": transliterator,
+    }
+    store.set_project(store.project.model_copy(update={"config": project_config}))
+
+
+def sfx_skip_types(store: ProjectStore) -> frozenset[RegionType]:
+    """Region types the render stages leave untouched: ``{SFX}`` in ``skip`` mode, else none (SG-5).
+
+    With no SFX config (the default) this is empty, so masking/compositing behave exactly as before.
+    """
+    sfx_config = store.project.config.get("sfx")
+    if sfx_config and sfx_config.get("mode") == SfxMode.SKIP.value:
+        return frozenset({RegionType.SFX})
+    return frozenset()
 
 
 def load_glossary(store: ProjectStore) -> tuple[GlossaryEntry, ...]:
@@ -575,12 +682,26 @@ def build_pipeline(store: ProjectStore, *, jobs: int = 1) -> Pipeline[ProjectSto
         group_config = config.get("group") or {}
         stages.append(GroupStage(group_config.get("max_gap_ratio", DEFAULT_GAP_RATIO)))
 
+        # SFX handling (classify + transliterate) is opt-in and needs OCR, so it joins only when
+        # both an OCR engine and an SFX mode are configured (via ``mfo sfx``). Masking must run
+        # after it in "skip" mode so SFX regions are typed before masking leaves them untouched.
+        ocr_config = config.get("ocr")
+        sfx_config = config.get("sfx")
+        sfx_active = sfx_config is not None and ocr_config is not None
+        skip_types = sfx_skip_types(store) if sfx_active else frozenset()
+
         # Rendering (masking) only needs the detected regions, so it joins independently of OCR.
         render_config = config.get("render")
         if render_config is not None:
-            stages.append(RenderStage(MaskConfig(**render_config), jobs=jobs))
+            stages.append(
+                RenderStage(
+                    MaskConfig(**render_config),
+                    skip_types=skip_types,
+                    extra_deps=(SFX_STAGE,) if sfx_active else (),
+                    jobs=jobs,
+                )
+            )
 
-        ocr_config = config.get("ocr")
         if ocr_config is not None:
             stages.append(
                 OcrStage(
@@ -590,6 +711,17 @@ def build_pipeline(store: ProjectStore, *, jobs: int = 1) -> Pipeline[ProjectSto
                     jobs=jobs,
                 )
             )
+
+            if sfx_active:
+                assert sfx_config is not None
+                stages.append(
+                    SfxStage(
+                        get_sfx_classifier(sfx_config.get("classifier", "heuristic")),
+                        get_transliterator(sfx_config.get("transliterator", "kana")),
+                        source_lang=store.project.source_lang,
+                        mode=SfxMode(sfx_config.get("mode", SfxMode.RENDER.value)),
+                    )
+                )
 
             # Translation depends on OCR, so it only joins once OCR is configured too.
             translate_config = config.get("translate")
@@ -611,6 +743,6 @@ def build_pipeline(store: ProjectStore, *, jobs: int = 1) -> Pipeline[ProjectSto
                 # Compositing needs both the masked base and the translations, so it joins only
                 # once rendering (masking) has been configured alongside translation.
                 if render_config is not None:
-                    stages.append(CompositeStage(jobs=jobs))
+                    stages.append(CompositeStage(skip_types=skip_types, jobs=jobs))
 
     return Pipeline(stages)

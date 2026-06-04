@@ -858,6 +858,67 @@ def test_run_includes_composite_stage_once_render_and_translate_configured(tmp_p
         assert "composite" in build_pipeline(store).stage_names()
 
 
+def _add_sfx_unit(store: ProjectStore) -> str:
+    """A page with one wide, untyped region (the heuristic will call SFX) + its OCR + unit."""
+    page = Page(project_id=store.project.id, index=0, image_path="p0.png", width=200, height=300)
+    store.db.save(page)
+    region = Region(
+        page_id=page.id, bbox=BBox(x=0, y=0, width=180, height=20), reading_order_index=0
+    )
+    store.db.save(region)
+    store.db.save(OCRSpan(region_id=region.id, text="ドーン"))
+    unit = TranslationUnit(page_id=page.id, ordered_region_ids=[region.id])
+    store.db.save(unit)
+    return unit.id
+
+
+def test_sfx_classifies_and_transliterates(tmp_path: Path) -> None:
+    # DoD: SFX regions are typed and get a transliteration candidate (SG-5).
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target), "--source", "ja", "--target", "en"])
+    with ProjectStore.open(target) as store:
+        unit_id = _add_sfx_unit(store)
+
+    result = runner.invoke(app, ["sfx", str(target), "--mode", "transliterate"])
+    assert result.exit_code == 0, result.stdout
+
+    with ProjectStore.open(target) as store:
+        region = store.db.list(Region)[0]
+        assert region.type is RegionType.SFX  # classified
+        unit = next(u for u in store.db.list(TranslationUnit) if u.id == unit_id)
+        sfx = next(c for c in unit.candidates if c.kind is CandidateKind.SFX)
+        assert sfx.text == "DOON"
+        assert unit.selected_candidate_id == sfx.id  # transliterate mode selects it
+
+
+def test_sfx_skip_mode_persists_config_and_skips_render(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    runner.invoke(app, ["sfx", str(target), "--mode", "skip"])
+
+    from mfo.cli.stages import sfx_skip_types
+
+    with ProjectStore.open(target) as store:
+        assert store.project.config["sfx"]["mode"] == "skip"
+        assert sfx_skip_types(store) == frozenset({RegionType.SFX})
+
+
+def test_run_includes_sfx_stage_once_configured(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    source = tmp_path / "src"
+    source.mkdir()
+    _make_page_with_text(source / "p1.png")
+    runner.invoke(app, ["import", str(target), str(source)])
+    # SFX needs OCR, so it only joins once OCR is configured too.
+    runner.invoke(app, ["sfx", str(target), "--mode", "transliterate"])
+    with ProjectStore.open(target) as store:
+        assert "sfx" not in build_pipeline(store).stage_names()
+    runner.invoke(app, ["ocr", str(target)])
+    with ProjectStore.open(target) as store:
+        assert "sfx" in build_pipeline(store).stage_names()
+
+
 def test_run_includes_translate_stage_once_ocr_configured(tmp_path: Path) -> None:
     target = tmp_path / "vol"
     runner.invoke(app, ["init", str(target)])

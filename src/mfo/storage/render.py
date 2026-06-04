@@ -70,28 +70,39 @@ def _regions_fingerprint(regions: list[Region]) -> str:
     return digest.hexdigest()
 
 
+def _skip_token(skip_types: frozenset[RegionType]) -> str:
+    """A stable tag for the skipped region types, so toggling SFX skip re-runs the stage (SG-5)."""
+    return ",".join(sorted(t.value for t in skip_types))
+
+
 def mask_pages(
     store: ProjectStore,
     *,
     mask: MaskPage,
     signature: str,
+    skip_types: frozenset[RegionType] = frozenset(),
     force: bool = False,
     jobs: int = 1,
 ) -> list[RenderArtifact]:
     """Mask the source text on every page, persisting a masked layer + mask. Returns new ones.
 
     Pages with no regions still get a masked layer (a faithful copy of the original) so the
-    downstream render always has a base to typeset onto. Pages are planned and persisted serially
-    (deterministic order); only the injected ``mask`` callable runs concurrently when ``jobs > 1``.
+    downstream render always has a base to typeset onto. Regions whose type is in ``skip_types`` are
+    left unmasked, so their original art shows through (SG-5: leaving SFX untouched). Pages are
+    planned and persisted serially (deterministic order); only the injected ``mask`` callable runs
+    concurrently when ``jobs > 1``.
     """
     pending: list[_MaskJob] = []
     for page in store.db.list(Page, order_by="idx"):
         regions = store.db.list(Region, where=("page_id", page.id))
-        boxes = [region.bbox for region in regions]
+        boxes = [region.bbox for region in regions if region.type not in skip_types]
 
         original = store.layout.root / page.image_path
         source_hash = sha256_file(original)
-        page_signature = content_key(source_hash, f"{signature}|{_regions_fingerprint(regions)}")
+        page_signature = content_key(
+            source_hash,
+            f"{signature}|skip={_skip_token(skip_types)}|{_regions_fingerprint(regions)}",
+        )
 
         existing = store.db.list(RenderArtifact, where=("page_id", page.id))
         current = [a for a in existing if a.params.get("kind") == MASK_KIND]
@@ -196,11 +207,14 @@ def _unit_sort_key(unit: TranslationUnit, regions: dict[str, Region]) -> tuple[f
     return math.inf, unit.id
 
 
-def page_placements(store: ProjectStore, page: Page) -> list[PagePlacement]:
+def page_placements(
+    store: ProjectStore, page: Page, *, skip_types: frozenset[RegionType] = frozenset()
+) -> list[PagePlacement]:
     """Build the typesetting placements for a page: one per translated unit, in reading order.
 
     Each unit's *selected* translation (I-3/FR-29) is placed over the combined box of its regions,
-    styled by the unit's leading region type. Units with no selected text or no regions are skipped.
+    styled by the unit's leading region type. Units with no selected text or no regions are skipped,
+    as are units whose leading region type is in ``skip_types`` (SG-5: leaving SFX untouched).
     """
     units = store.db.list(TranslationUnit, where=("page_id", page.id))
     if not units:
@@ -217,6 +231,8 @@ def page_placements(store: ProjectStore, page: Page) -> list[PagePlacement]:
             continue
         # Skip units whose region was auto-ignored (panel/frame blobs); they aren't real text.
         if all(region.status is RegionStatus.IGNORE for region in unit_regions):
+            continue
+        if unit_regions[0].type in skip_types:
             continue
         preset = _TYPE_PRESETS.get(unit_regions[0].type, "default")
         placements.append(
@@ -249,6 +265,7 @@ def composite_pages(
     *,
     composite: CompositePage,
     signature: str,
+    skip_types: frozenset[RegionType] = frozenset(),
     force: bool = False,
     jobs: int = 1,
 ) -> list[RenderArtifact]:
@@ -266,7 +283,7 @@ def composite_pages(
     """
     pending: list[_CompositeJob] = []
     for page in store.db.list(Page, order_by="idx"):
-        placements = page_placements(store, page)
+        placements = page_placements(store, page, skip_types=skip_types)
 
         masked = _masked_artifact(store, page)
         if masked is not None:

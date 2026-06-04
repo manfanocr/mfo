@@ -42,9 +42,11 @@ from mfo.cli.stages import (
     save_ocr_config,
     save_preprocess_config,
     save_render_config,
+    save_sfx_config,
     save_structure_config,
     save_translate_config,
     series_glossary_path,
+    sfx_skip_types,
 )
 from mfo.core import (
     DEFAULT_THRESHOLD,
@@ -59,6 +61,7 @@ from mfo.core import (
     RenderArtifact,
     RenderPreset,
     SeriesPreset,
+    SfxMode,
     TranslationStyle,
     TranslationUnit,
     find_preset,
@@ -79,6 +82,7 @@ from mfo.language import (
     get_assistant,
     get_translator,
 )
+from mfo.language.transliterate import get_transliterator
 from mfo.render import MaskConfig, mask_file
 from mfo.storage import (
     DEFAULT_MIN_CONFIDENCE,
@@ -100,6 +104,7 @@ from mfo.storage import (
     mask_pages,
     ocr_regions,
     preprocess_pages,
+    process_sfx,
     save_series_glossary,
     save_series_presets,
     translate_units,
@@ -110,11 +115,14 @@ from mfo.vision import (
     OcrDependencyError,
     PageOrder,
     PreprocessConfig,
+    SfxFeatures,
+    classify_region_type,
     detect_file,
     detect_panels_file,
     discover_images,
     get_detector,
     get_ocr_engine,
+    get_sfx_classifier,
     is_archive,
     preprocess_file,
     recognize_file,
@@ -887,6 +895,55 @@ def group(
     typer.secho(f"Grouped regions into {len(units)} unit(s).", fg=typer.colors.GREEN)
 
 
+@app.command()
+def sfx(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+    mode: Annotated[
+        SfxMode,
+        typer.Option(
+            "--mode",
+            help="How to handle SFX at render: 'render' (translate like dialogue — default), "
+            "'transliterate' (typeset a romanization), or 'skip' (leave original SFX art alone).",
+        ),
+    ] = SfxMode.RENDER,
+    classifier: Annotated[
+        str, typer.Option("--classifier", help="SFX classifier adapter (offline 'heuristic').")
+    ] = "heuristic",
+    transliterator: Annotated[
+        str, typer.Option("--transliterator", help="Transliterator adapter (offline 'kana').")
+    ] = "kana",
+) -> None:
+    """Classify SFX regions and attach transliterations; set how SFX renders (offline; SG-5)."""
+    try:
+        classify = get_sfx_classifier(classifier)
+        romanize = get_transliterator(transliterator)
+    except ValueError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from None
+    with _open_store(path) as store:
+        save_sfx_config(store, mode=mode, classifier=classifier, transliterator=transliterator)
+        source_lang = store.project.source_lang
+        result = process_sfx(
+            store,
+            classify=lambda region, page: classify_region_type(
+                SfxFeatures(
+                    bbox=region.bbox,
+                    region_type=region.type,
+                    page_width=page.width,
+                    page_height=page.height,
+                ),
+                classify,
+            ),
+            transliterate=lambda text: romanize.transliterate(text, source_lang=source_lang),
+            mode=mode,
+        )
+    typer.secho(
+        f"SFX ({mode.value}): classified {len(result.classified)} region(s), "
+        f"transliterated {len(result.transliterated)} unit(s).",
+        fg=typer.colors.GREEN,
+    )
+
+
 def _stage_line(label: str, count: int, unit: str) -> str:
     mark = "✓" if count else "·"
     state = f"{count} {unit}" if count else "pending"
@@ -978,6 +1035,7 @@ def render(
             store,
             mask=lambda image_path, boxes: mask_file(image_path, boxes, config),
             signature=config.signature(),
+            skip_types=sfx_skip_types(store),
             force=force,
             jobs=resolve_jobs(jobs),
         )
@@ -1108,6 +1166,7 @@ def export(
             store,
             composite=composite_page_file,
             signature=COMPOSITE_SIGNATURE,
+            skip_types=sfx_skip_types(store),
             jobs=resolve_jobs(jobs),
         )
         result = export_pages(store, out_dir)
