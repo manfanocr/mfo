@@ -20,7 +20,12 @@ import json
 from pathlib import Path
 
 from mfo.core.enums import AssistMode, ReadingDirection, TranslationStyle
-from mfo.core.glossary import GlossaryEntry, entries_from_config, entries_to_config
+from mfo.core.glossary import (
+    GlossaryEntry,
+    entries_from_config,
+    entries_to_config,
+    merge_glossaries,
+)
 from mfo.core.grouping import DEFAULT_GAP_RATIO
 from mfo.core.pipeline import Pipeline, Stage
 from mfo.language import TranslationRequest, Translator, get_translator
@@ -40,6 +45,7 @@ from mfo.storage import (
     detect_regions,
     group_into_units,
     import_pages,
+    load_series_glossary,
     mask_pages,
     ocr_regions,
     preprocess_pages,
@@ -471,6 +477,32 @@ def save_glossary(store: ProjectStore, entries: tuple[GlossaryEntry, ...]) -> No
     store.set_project(store.project.model_copy(update={"config": project_config}))
 
 
+def series_glossary_path(store: ProjectStore) -> Path | None:
+    """The shared series-glossary store this project links to, or ``None`` if unlinked (SG-2)."""
+    raw = store.project.config.get("series_glossary")
+    return Path(raw) if raw else None
+
+
+def link_series_glossary(store: ProjectStore, path: Path) -> None:
+    """Point this project at a shared series-glossary store so its volumes share terms (SG-2)."""
+    project_config = dict(store.project.config)
+    project_config["series_glossary"] = str(path)
+    store.set_project(store.project.model_copy(update={"config": project_config}))
+
+
+def load_effective_glossary(store: ProjectStore) -> tuple[GlossaryEntry, ...]:
+    """The glossary a unit actually consults: project glossary over the linked series one (SG-2).
+
+    Project entries win (:func:`~mfo.core.glossary.merge_glossaries`); with no linked series store
+    this is just the project glossary, so the offline core path is unchanged for unlinked projects.
+    """
+    project = load_glossary(store)
+    path = series_glossary_path(store)
+    if path is None:
+        return project
+    return merge_glossaries(project, load_series_glossary(path).entries)
+
+
 def build_pipeline(store: ProjectStore, *, jobs: int = 1) -> Pipeline[ProjectStore]:
     """Assemble the pipeline from the project's persisted configuration.
 
@@ -555,7 +587,7 @@ def build_pipeline(store: ProjectStore, *, jobs: int = 1) -> Pipeline[ProjectSto
                         source_lang=store.project.source_lang,
                         target_lang=store.project.target_lang,
                         style=style,
-                        glossary=entries_from_config(config.get("glossary")),
+                        glossary=load_effective_glossary(store),
                         jobs=jobs,
                     )
                 )

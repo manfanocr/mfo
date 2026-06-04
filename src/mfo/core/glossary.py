@@ -34,6 +34,19 @@ class GlossaryEntry(BaseModel):
     notes: str | None = None  # optional human note (e.g. gender, register)
 
 
+def merge_glossaries(
+    project: Sequence[GlossaryEntry], series: Sequence[GlossaryEntry]
+) -> tuple[GlossaryEntry, ...]:
+    """Layer a project glossary over a shared series glossary, **project taking precedence** (SG-2).
+
+    A unit consults project → series: a project entry shadows any series entry with the same
+    ``source`` term (the per-volume decision overrides the cross-volume default), and series entries
+    not overridden are appended after the project's, in order. Pure and order-deterministic.
+    """
+    overridden = {entry.source for entry in project}
+    return (*project, *(entry for entry in series if entry.source not in overridden))
+
+
 def applicable_entries(source_text: str, entries: Sequence[GlossaryEntry]) -> list[GlossaryEntry]:
     """The glossary entries whose source term occurs in ``source_text`` (order preserved)."""
     return [entry for entry in entries if entry.source and entry.source in source_text]

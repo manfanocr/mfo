@@ -25,6 +25,7 @@ from mfo.core.glossary import (
     entries_from_config,
     entries_to_config,
     glossary_terms,
+    merge_glossaries,
 )
 from mfo.core.grouping import group_regions
 from mfo.core.ids import new_id, new_ulid
@@ -60,6 +61,12 @@ from mfo.core.plugins import (
     resolve_factory,
 )
 from mfo.core.reading_order import order_regions, order_regions_by_panels, panel_of
+from mfo.core.series import (
+    SeriesGlossary,
+    merge_entries,
+    remove_entry,
+    upsert_entry,
+)
 from mfo.core.traceability import selected_candidate, selected_text
 
 __all__ = [
@@ -84,6 +91,12 @@ __all__ = [
     "entries_from_config",
     "entries_to_config",
     "glossary_terms",
+    "merge_glossaries",
+    # series glossary
+    "SeriesGlossary",
+    "merge_entries",
+    "remove_entry",
+    "upsert_entry",
     # grouping
     "group_regions",
     # ids

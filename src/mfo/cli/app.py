@@ -30,6 +30,8 @@ from mfo.cli.stages import (
     archive_extract_dir,
     build_pipeline,
     composite_page_file,
+    link_series_glossary,
+    load_effective_glossary,
     load_glossary,
     save_assist_config,
     save_detect_config,
@@ -41,6 +43,7 @@ from mfo.cli.stages import (
     save_render_config,
     save_structure_config,
     save_translate_config,
+    series_glossary_path,
 )
 from mfo.core import (
     DEFAULT_THRESHOLD,
@@ -55,7 +58,10 @@ from mfo.core import (
     RenderArtifact,
     TranslationStyle,
     TranslationUnit,
+    merge_entries,
+    remove_entry,
     resolve_jobs,
+    upsert_entry,
 )
 from mfo.core.grouping import DEFAULT_GAP_RATIO
 from mfo.language import (
@@ -82,9 +88,11 @@ from mfo.storage import (
     flag_low_confidence,
     group_into_units,
     import_pages,
+    load_series_glossary,
     mask_pages,
     ocr_regions,
     preprocess_pages,
+    save_series_glossary,
     translate_units,
     write_mapping,
 )
@@ -444,7 +452,7 @@ def translate(
         save_translate_config(store, translator, style=style)
         source_lang = store.project.source_lang
         target_lang = store.project.target_lang
-        glossary = load_glossary(store)
+        glossary = load_effective_glossary(store)
         try:
             units = translate_units(
                 store,
@@ -597,6 +605,140 @@ def glossary_remove(
             raise typer.Exit(code=1) from None
         save_glossary(store, remaining)
     typer.secho(f"Removed {source!r}.", fg=typer.colors.GREEN)
+
+
+@glossary_app.command("promote")
+def glossary_promote(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+    source: Annotated[str, typer.Argument(help="Source term of the project entry to promote.")],
+) -> None:
+    """Promote a project glossary entry into the linked series store, shared across volumes."""
+    with _open_store(path) as store:
+        store_path = series_glossary_path(store)
+        if store_path is None:
+            typer.secho(
+                "No series glossary linked; run 'mfo glossary series link' first.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1) from None
+        entry = next((e for e in load_glossary(store) if e.source == source), None)
+        if entry is None:
+            typer.secho(f"No project glossary entry for {source!r}.", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from None
+        series = upsert_entry(load_series_glossary(store_path), entry)
+        save_series_glossary(store_path, series)
+    typer.secho(
+        f"Promoted {source!r} -> {entry.target!r} to the series glossary.", fg=typer.colors.GREEN
+    )
+
+
+series_app = typer.Typer(
+    no_args_is_help=True,
+    help="Manage the shared series glossary (terminology memory across volumes; SG-2, SG-3).",
+)
+glossary_app.add_typer(series_app, name="series")
+
+
+@series_app.command("link")
+def series_link(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+    store_path: Annotated[Path, typer.Argument(help="Shared series-glossary file (JSON).")],
+) -> None:
+    """Link this project to a shared series-glossary store so its volumes inherit terms (SG-2)."""
+    with _open_store(path) as store:
+        link_series_glossary(store, store_path)
+        if not store_path.exists():
+            save_series_glossary(store_path, load_series_glossary(store_path))
+    typer.secho(f"Linked series glossary: {store_path}", fg=typer.colors.GREEN)
+
+
+@series_app.command("list")
+def series_list(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+) -> None:
+    """List the linked series-glossary entries."""
+    with _open_store(path) as store:
+        store_path = series_glossary_path(store)
+        if store_path is None:
+            typer.echo("No series glossary linked.")
+            return
+        series = load_series_glossary(store_path)
+    if not series.entries:
+        typer.echo("No series glossary entries.")
+        return
+    for entry in series.entries:
+        line = f"  {entry.source} -> {entry.target}"
+        if entry.aliases:
+            line += f"  (aliases: {', '.join(entry.aliases)})"
+        if entry.notes:
+            line += f"  # {entry.notes}"
+        typer.echo(line)
+
+
+@series_app.command("remove")
+def series_remove(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+    source: Annotated[str, typer.Argument(help="Source term of the series entry to remove.")],
+) -> None:
+    """Remove an entry from the linked series glossary by its source term."""
+    with _open_store(path) as store:
+        store_path = series_glossary_path(store)
+        if store_path is None:
+            typer.secho("No series glossary linked.", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from None
+        series = load_series_glossary(store_path)
+        if all(e.source != source for e in series.entries):
+            typer.secho(
+                f"No series glossary entry for {source!r}.", fg=typer.colors.YELLOW, err=True
+            )
+            raise typer.Exit(code=1) from None
+        save_series_glossary(store_path, remove_entry(series, source))
+    typer.secho(f"Removed {source!r} from the series glossary.", fg=typer.colors.GREEN)
+
+
+@series_app.command("export")
+def series_export(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+    out: Annotated[Path, typer.Argument(help="Destination file for the shared glossary (JSON).")],
+) -> None:
+    """Export the linked series glossary to a file for team sharing (lossless; SG-2)."""
+    with _open_store(path) as store:
+        store_path = series_glossary_path(store)
+        if store_path is None:
+            typer.secho("No series glossary linked.", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from None
+        save_series_glossary(out, load_series_glossary(store_path))
+    typer.secho(f"Exported series glossary -> {out}", fg=typer.colors.GREEN)
+
+
+@series_app.command("import")
+def series_import(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+    src: Annotated[Path, typer.Argument(help="Series-glossary file to import (JSON).")],
+    replace: Annotated[
+        bool,
+        typer.Option("--replace", help="Replace the linked store instead of merging into it."),
+    ] = False,
+) -> None:
+    """Import a shared series glossary into the linked store (merge by default; SG-2)."""
+    with _open_store(path) as store:
+        store_path = series_glossary_path(store)
+        if store_path is None:
+            typer.secho(
+                "No series glossary linked; run 'mfo glossary series link' first.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1) from None
+        incoming = load_series_glossary(src)
+        if replace:
+            merged = incoming
+        else:
+            merged = merge_entries(load_series_glossary(store_path), incoming.entries)
+        save_series_glossary(store_path, merged)
+    verb = "Replaced with" if replace else "Merged in"
+    typer.secho(f"{verb} {len(incoming.entries)} series entr(ies).", fg=typer.colors.GREEN)
 
 
 @app.command()

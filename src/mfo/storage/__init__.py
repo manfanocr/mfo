@@ -35,6 +35,11 @@ from mfo.storage.render import (
     mask_pages,
     page_placements,
 )
+from mfo.storage.series import (
+    SERIES_GLOSSARY_VERSION,
+    load_series_glossary,
+    save_series_glossary,
+)
 from mfo.storage.translate import Translated, translate_units
 
 __all__ = [
@@ -81,6 +86,10 @@ __all__ = [
     "RecognizedSpan",
     # reading order
     "assign_reading_order",
+    # series glossary
+    "SERIES_GLOSSARY_VERSION",
+    "load_series_glossary",
+    "save_series_glossary",
     # grouping
     "group_into_units",
     # translate

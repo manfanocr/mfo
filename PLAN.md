@@ -389,7 +389,7 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
   passes it through — flat projects keep a byte-identical bundle (no spurious re-translate). Offline
   adapters ignore context, so they're unaffected (I-7). USER_GUIDE note. See CHANGELOG.
 
-### Batch 8.5 — Cross-volume name & terminology memory (SG-2, SG-3)
+### Batch 8.5 — Cross-volume name & terminology memory (SG-2, SG-3) ✅ *(landed 2026-06-04)*
 - **Scope:** A **series-level** shared glossary/terminology store (above the per-project glossary of
   4.2) that persists character names, honorifics, and pinned terms across volumes, with
   export/import for team sharing. New units consult project → series glossary; the review editor can
@@ -397,6 +397,14 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
 - **Satisfies:** SG-2, SG-3; FR-23, FR-24, FR-25; I-2.
 - **DoD:** A name fixed in volume 1 is enforced in volume 2 via the shared store; the store
   exports/imports losslessly (round-trip test); precedence (project overrides series) is tested.
+- **Shipped:** `mfo.core.series` (`SeriesGlossary` model + `upsert_entry`/`remove_entry`/
+  `merge_entries`) and `mfo.core.glossary.merge_glossaries` (project-over-series precedence);
+  `mfo.storage.series` (atomic, versioned JSON store that doubles as the portable export — load/save
+  round-trip losslessly). A volume links a shared store via `Project.config["series_glossary"]`;
+  `load_effective_glossary` merges project → series and feeds `mfo translate`, `mfo run`, and the UI
+  retranslate. CLI: `mfo glossary series link/list/remove/export/import` + `mfo glossary promote`;
+  review API `POST /api/glossary/series/promote`. Unlinked projects are unchanged (offline core
+  unaffected, I-7). USER_GUIDE + DATA_MODEL. See CHANGELOG.
 
 ### Batch 8.6 — Per-series style presets (SG-4)
 - **Scope:** Named, series-scoped presets bundling translation style (4.2), the shared glossary
@@ -460,7 +468,7 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
 - [x] M5 Render & Export
 - [x] M6 Review Editor *(MVP complete — M0–M6 satisfy the DoD §21)*
 - [x] M7 AI Refinement *(7.1 assist adapter, 7.2 modes, 7.3 confidence-driven review)*
-- [ ] M8 Hardening & Stretch *(planned into batches 8.0–8.11; 8.0 fused detect+recognize, 8.1 parallel processing, 8.2 archive import, 8.3 plugin system, 8.4 panel-aware context landed)*
+- [ ] M8 Hardening & Stretch *(planned into batches 8.0–8.11; 8.0 fused detect+recognize, 8.1 parallel processing, 8.2 archive import, 8.3 plugin system, 8.4 panel-aware context, 8.5 cross-volume glossary landed)*
 
 When a batch lands: tick it, and append a dated entry to [CHANGELOG.md](CHANGELOG.md) with the
 spec IDs it satisfied.

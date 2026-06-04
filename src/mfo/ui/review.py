@@ -48,6 +48,7 @@ from mfo.core.glossary import (
     apply_glossary,
     glossary_terms,
 )
+from mfo.core.series import upsert_entry
 from mfo.render import (
     CompositeArtifact,
     MaskConfig,
@@ -395,6 +396,27 @@ def set_region_status(store: ProjectStore, region_id: str, status: str) -> dict[
     with history.record(store, region.page_id, "set_status"):
         store.db.save(region.model_copy(update={"status": new_status}))
     return page_view(store, region.page_id)
+
+
+def promote_term_to_series(store: ProjectStore, source: str) -> dict[str, Any]:
+    """Promote a project glossary term into the linked series store, shared across volumes (SG-3).
+
+    The editor surfaces this so a name settled while reviewing one volume carries into the next
+    without re-entry (SG-2). Requires a linked series store (``mfo glossary series link``) and the
+    term to already exist in the project glossary; raises ``ValueError`` otherwise. This is glossary
+    bookkeeping outside the page-edit graph, so it is not part of the undo/redo history.
+    """
+    from mfo.cli.stages import load_glossary, series_glossary_path
+    from mfo.storage.series import load_series_glossary, save_series_glossary
+
+    store_path = series_glossary_path(store)
+    if store_path is None:
+        raise ValueError("no series glossary is linked to this project")
+    entry = next((e for e in load_glossary(store) if e.source == source), None)
+    if entry is None:
+        raise ValueError(f"no project glossary entry for {source!r}")
+    save_series_glossary(store_path, upsert_entry(load_series_glossary(store_path), entry))
+    return {"source": entry.source, "target": entry.target}
 
 
 def move_region(

@@ -19,10 +19,12 @@ One source image. `image_path` points at the **read-only original** (I-1). `prep
 holds derived-image metadata (cache refs, deskew/orientation), never overwriting the original.
 
 ### Region
-`id · page_id · bbox|polygon · type · reading_order_index · confidence · status`
+`id · page_id · bbox|polygon · type · reading_order_index · panel_index · confidence · status`
 A detected text area. `type` ∈ {bubble, narration, sfx, caption, side_text, unknown}.
 `status` ∈ {auto, correct, needs_review, ignore, manual} (FR-40). `reading_order_index` set by
-the structure stage (FR-16) and user-overridable (FR-20).
+the structure stage (FR-16) and user-overridable (FR-20). `panel_index` records which panel/frame
+the region sits in when the structure stage runs panel-aware (FR-18), so translation context can be
+scoped to a panel (SG-1); `None` on the flat path.
 
 ### OCRSpan
 `id · region_id · text · confidence · alternatives · token_offsets?`
@@ -43,6 +45,13 @@ lets the UI show edit history (FR-26, §13.2). Never deleted — corrections are
 `id · page_id · output_path · params`
 A produced page render with the exact parameters used (font, fit, mask settings) for
 reproducibility.
+
+### SeriesGlossary (cross-volume, out-of-project)
+`name · entries[]` (each `source · target · aliases · notes`)
+A **shared** glossary persisted in a single JSON file **outside** any project directory, so the many
+volumes of one series can link to it and inherit terms (SG-2, SG-3). A volume links to it via
+`Project.config["series_glossary"]` (a path). A unit consults **project → series**, project entries
+winning (`merge_glossaries`); the store round-trips losslessly for team export/import.
 
 ## Relationships
 

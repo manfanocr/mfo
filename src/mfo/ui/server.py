@@ -30,6 +30,7 @@ from mfo.ui.review import (
     page_render_path,
     page_view,
     project_summary,
+    promote_term_to_series,
     redo_edit,
     reocr_region,
     reorder_regions,
@@ -134,6 +135,12 @@ class HistoryScope(BaseModel):
     page_id: str | None = None
 
 
+class SeriesPromotion(BaseModel):
+    """Body for promoting a project glossary term into the shared series store (SG-3)."""
+
+    source: str
+
+
 # The OCR/translate engines a created region needs. Wired lazily from the project config so this
 # module never pulls in the heavy vision/language stacks at import (I-7/I-8); split out as a seam so
 # the create-region route can be tested with fakes instead of real engines.
@@ -143,7 +150,7 @@ RegionEngines = tuple[
 
 
 def _region_engines(store: ProjectStore) -> RegionEngines:
-    from mfo.cli.stages import load_glossary
+    from mfo.cli.stages import load_effective_glossary
     from mfo.core.enums import TranslationStyle
     from mfo.language.translate import TranslationRequest, get_translator
     from mfo.vision.ocr import get_ocr_engine, recognize_file
@@ -170,7 +177,7 @@ def _region_engines(store: ProjectStore) -> RegionEngines:
             )
         )
 
-    return recognize, translate, target_lang, style, load_glossary(store)
+    return recognize, translate, target_lang, style, load_effective_glossary(store)
 
 
 def create_app(store: ProjectStore) -> FastAPI:
@@ -317,6 +324,12 @@ def create_app(store: ProjectStore) -> FastAPI:
     @app.get("/api/history")
     def get_history(page_id: str | None = None) -> dict[str, Any]:
         return history_view(store, page_id=page_id)
+
+    # -- series glossary (SG-2/SG-3): promote a settled term into the shared cross-volume store --
+
+    @app.post("/api/glossary/series/promote")
+    def post_series_promote(body: SeriesPromotion) -> dict[str, Any]:
+        return promote_term_to_series(store, body.source)
 
     # -- re-render preview (§13.3) --
 

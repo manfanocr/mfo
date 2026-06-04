@@ -10,6 +10,26 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 
 ### M8 — Hardening & Stretch
 
+#### Added — Batch 8.5: Cross-volume name & terminology memory (2026-06-04)
+- **A shared series glossary carries names and terms across volumes.** A series spans many volumes,
+  each its own project; `mfo.core.series.SeriesGlossary` is a shared store (a single JSON file
+  **outside** any project) that several volumes link to, so a name settled in volume 1 is enforced in
+  volume 2 without re-entry (SG-2/SG-3). `mfo.storage.series` persists it atomically in a versioned
+  format that *is* the portable export — `load_series_glossary`/`save_series_glossary` round-trip
+  losslessly for team export/import.
+- **Project → series precedence.** `mfo.core.glossary.merge_glossaries` layers a project glossary
+  over the series one with the project winning on a shared source term (the per-volume decision
+  overrides the cross-volume default). A new `load_effective_glossary` (CLI) merges the two and feeds
+  `mfo translate`, `mfo run` (so a series change re-translates affected pages — it's part of the
+  translation cache key), and the review editor's per-region retranslate.
+- **CLI & API.** A volume links a store with `mfo glossary series link <proj> <file>`; manage it with
+  `mfo glossary series list/remove/export/import` and promote a settled project term with
+  `mfo glossary promote <proj> <source>`. The review backend exposes the same capability at
+  `POST /api/glossary/series/promote` (`promote_term_to_series`).
+- **Offline core unchanged.** A project with no linked series store resolves exactly as before, so the
+  offline path is unaffected (I-7). New `Region.panel_index` aside (8.4), no schema migration is
+  needed — the series store lives outside the project DB. (SG-2, SG-3; FR-23/24/25; I-2)
+
 #### Added — Batch 8.4: Panel-aware context (2026-06-04)
 - **Translation context stays inside the bubble's panel.** When a project is ordered panel-aware
   (`mfo order --panels`), the panel-aware reading-order stage now stamps each region with its

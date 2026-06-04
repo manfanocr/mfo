@@ -20,6 +20,7 @@ from mfo.ui.review import (
     page_render_path,
     page_view,
     project_summary,
+    promote_term_to_series,
     redo_edit,
     reocr_region,
     reorder_regions,
@@ -56,4 +57,5 @@ __all__ = [
     "history_view",
     "rerender_page",
     "page_render_path",
+    "promote_term_to_series",
 ]

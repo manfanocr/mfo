@@ -165,6 +165,55 @@ deliberately does **not** bundle one. Your supported options for Google-quality 
 
 ---
 
+## Glossary & cross-volume terminology memory (`mfo glossary …`)
+
+A **glossary** pins how a recurring source term — a character name, honorific, place, or bit of
+jargon — should read in the target, so it renders consistently everywhere (FR-23/24). Each project
+has its own glossary:
+
+```bash
+mfo glossary add <proj> 太郎 Taro --alias Tarou   # pin 太郎 → "Taro"; normalize the variant "Tarou"
+mfo glossary list <proj>
+mfo glossary remove <proj> 太郎
+```
+
+Offline translators (`argos`/`deepl`) can't be *instructed*, so the glossary is **enforced** by
+rewriting known variant spellings to the canonical target in the output; the `api`/AI path also gets
+the applicable terms injected into its prompt.
+
+### Sharing terms across volumes (SG-2, SG-3)
+
+A series spans many volumes, each its own project. A **series glossary** is a shared store — one JSON
+file outside any project — that several volumes link to, so a name settled in volume 1 carries into
+volume 2 without re-entry:
+
+```bash
+# in each volume, link the same shared file:
+mfo glossary series link vol1 ./series.json
+mfo glossary series link vol2 ./series.json
+
+# settle a term while working on vol1, then promote it into the shared store:
+mfo glossary add vol1 太郎 Taro --alias Tarou
+mfo glossary promote vol1 太郎
+
+mfo glossary series list vol2          # vol2 now inherits 太郎 → Taro
+```
+
+A unit consults **project → series**: a project entry with the same source term **overrides** the
+series default (the per-volume decision wins). For team sharing, the store round-trips losslessly:
+
+```bash
+mfo glossary series export vol1 ./share.json     # hand off to a teammate
+mfo glossary series import vol2 ./share.json     # merge in (or --replace)
+```
+
+The shared store is consulted by `mfo translate` and `mfo run`; changing it re-translates affected
+pages on the next run (the glossary is part of the translation cache key). Unlinked projects are
+unaffected — the offline core path is unchanged (I-7). The review editor can also promote a term via
+`POST /api/glossary/series/promote`.
+
+---
+
 ## AI-assisted refinement (`mfo assist`)
 
 An **optional** layer that uses an LLM to refine your translations — more natural phrasing, a

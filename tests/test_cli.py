@@ -580,6 +580,91 @@ def test_glossary_add_replaces_same_source(tmp_path: Path) -> None:
         assert entries[0]["target"] == "oni"
 
 
+# -- series glossary: cross-volume terminology memory (batch 8.5; SG-2, SG-3) -----------------
+
+
+def test_series_link_promote_and_list(tmp_path: Path) -> None:
+    vol = tmp_path / "vol1"
+    store_file = tmp_path / "series.json"
+    runner.invoke(app, ["init", str(vol)])
+    runner.invoke(app, ["glossary", "add", str(vol), "太郎", "Taro", "--alias", "Tarou"])
+
+    link = runner.invoke(app, ["glossary", "series", "link", str(vol), str(store_file)])
+    assert link.exit_code == 0, link.stdout
+    assert store_file.exists()  # an empty store is created on link
+
+    promote = runner.invoke(app, ["glossary", "promote", str(vol), "太郎"])
+    assert promote.exit_code == 0, promote.stdout
+
+    listed = runner.invoke(app, ["glossary", "series", "list", str(vol)])
+    assert "太郎 -> Taro" in listed.stdout
+    assert "Tarou" in listed.stdout
+
+
+def test_series_promote_without_link_exits_1(tmp_path: Path) -> None:
+    vol = tmp_path / "vol"
+    runner.invoke(app, ["init", str(vol)])
+    runner.invoke(app, ["glossary", "add", str(vol), "鬼", "oni"])
+    result = runner.invoke(app, ["glossary", "promote", str(vol), "鬼"])
+    assert result.exit_code == 1
+
+
+def test_name_fixed_in_volume_one_is_enforced_in_volume_two(tmp_path: Path) -> None:
+    # The DoD: a term promoted from vol1 is consulted by vol2 through the shared store (SG-2).
+    store_file = tmp_path / "series.json"
+    vol1, vol2 = tmp_path / "vol1", tmp_path / "vol2"
+    for vol in (vol1, vol2):
+        runner.invoke(app, ["init", str(vol), "--source", "ja", "--target", "en"])
+        runner.invoke(app, ["glossary", "series", "link", str(vol), str(store_file)])
+
+    runner.invoke(app, ["glossary", "add", str(vol1), "太郎", "Taro", "--alias", "Tarou"])
+    runner.invoke(app, ["glossary", "promote", str(vol1), "太郎"])
+
+    from mfo.cli.stages import load_effective_glossary
+    from mfo.core.glossary import apply_glossary
+
+    with ProjectStore.open(vol2) as store:
+        effective = load_effective_glossary(store)
+        # vol2 has no project glossary of its own, yet inherits the series term and enforces it.
+        assert [(e.source, e.target) for e in effective] == [("太郎", "Taro")]
+        assert apply_glossary("Tarou runs", "太郎は走る", effective) == "Taro runs"
+
+
+def test_project_entry_overrides_series_entry(tmp_path: Path) -> None:
+    store_file = tmp_path / "series.json"
+    vol = tmp_path / "vol"
+    runner.invoke(app, ["init", str(vol)])
+    runner.invoke(app, ["glossary", "series", "link", str(vol), str(store_file)])
+    # Series says "oni"; the project pins "demon" for the same source — project wins (SG-2).
+    runner.invoke(app, ["glossary", "add", str(vol), "鬼", "oni"])
+    runner.invoke(app, ["glossary", "promote", str(vol), "鬼"])
+    runner.invoke(app, ["glossary", "add", str(vol), "鬼", "demon"])
+
+    from mfo.cli.stages import load_effective_glossary
+
+    with ProjectStore.open(vol) as store:
+        effective = load_effective_glossary(store)
+        assert [(e.source, e.target) for e in effective] == [("鬼", "demon")]
+
+
+def test_series_export_import_round_trip(tmp_path: Path) -> None:
+    src_store, share = tmp_path / "a.json", tmp_path / "share.json"
+    vol1, vol2 = tmp_path / "vol1", tmp_path / "vol2"
+    runner.invoke(app, ["init", str(vol1)])
+    runner.invoke(app, ["glossary", "series", "link", str(vol1), str(src_store)])
+    runner.invoke(app, ["glossary", "add", str(vol1), "鬼", "oni"])
+    runner.invoke(app, ["glossary", "promote", str(vol1), "鬼"])
+
+    export = runner.invoke(app, ["glossary", "series", "export", str(vol1), str(share)])
+    assert export.exit_code == 0, export.stdout
+
+    runner.invoke(app, ["init", str(vol2)])
+    runner.invoke(app, ["glossary", "series", "link", str(vol2), str(tmp_path / "b.json")])
+    imp = runner.invoke(app, ["glossary", "series", "import", str(vol2), str(share)])
+    assert imp.exit_code == 0, imp.stdout
+    assert "鬼 -> oni" in runner.invoke(app, ["glossary", "series", "list", str(vol2)]).stdout
+
+
 def test_export_mapping_writes_json(tmp_path: Path) -> None:
     target = tmp_path / "vol"
     runner.invoke(app, ["init", str(target), "--source", "ja", "--target", "en"])

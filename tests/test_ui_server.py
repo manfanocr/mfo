@@ -262,6 +262,31 @@ def test_translate_route_runs(
     assert response.json()["translation"].startswith("EN[")  # re-translated from current OCR
 
 
+def test_series_promote_route(client: tuple[TestClient, ProjectStore], tmp_path: Path) -> None:
+    from mfo.cli.stages import link_series_glossary, save_glossary
+    from mfo.core import GlossaryEntry
+    from mfo.storage.series import load_series_glossary
+
+    api, store = client
+    store_path = tmp_path / "series.json"
+    link_series_glossary(store, store_path)
+    save_glossary(store, (GlossaryEntry(source="鬼", target="oni"),))
+
+    response = api.post("/api/glossary/series/promote", json={"source": "鬼"})
+    assert response.status_code == 200
+    assert response.json() == {"source": "鬼", "target": "oni"}
+    # The term is now in the shared store, available to other volumes (SG-2).
+    assert load_series_glossary(store_path).entries[0].source == "鬼"
+
+
+def test_series_promote_without_link_is_400(
+    client: tuple[TestClient, ProjectStore],
+) -> None:
+    api, _ = client
+    response = api.post("/api/glossary/series/promote", json={"source": "鬼"})
+    assert response.status_code == 400
+
+
 def test_reocr_route_reports_engine_unavailable(
     client: tuple[TestClient, ProjectStore], monkeypatch: pytest.MonkeyPatch
 ) -> None:
