@@ -1,0 +1,400 @@
+.TH MFO 1 "2026-06-04" "mfo 0.0.0" "User Commands"
+.SH NAME
+mfo \- manga/manhua OCR & context-aware translation pipeline
+.SH SYNOPSIS
+.B mfo
+[OPTIONS] COMMAND [ARGS]...
+.SH DESCRIPTION
+mfo (Manhua Fanyi OCR) turns a folder of manga/manhua page images into translated, typeset pages. It runs a local-first, inspectable pipeline \- import, detect, OCR, reading order, dialogue grouping, context-aware translation, masking and rendering \- with an interactive review editor and full source-to-translation traceability. The core path is fully offline; cloud/LLM adapters are strictly opt-in.
+.SH COMMANDS
+.TP
+.B mfo assist [OPTIONS] PATH
+Refine translations with the optional AI layer (opt-in; configured from MFO_AI_*/MFO_API_*).
+.RS
+.TP
+.B --mode
+AI mode (§12.4): 'assist' (suggest only), 'review' (highlight the AI candidate), or 'auto' (apply high-confidence suggestions). Never overwrites approved text.
+.TP
+.B --assistant
+AI assistant adapter (MFO_AI_* / MFO_API_* env).
+.TP
+.B --min-confidence
+Confidence an 'auto' suggestion must reach before it is applied.
+.TP
+.B --style
+Translation register (FR-25).
+.TP
+.B --force
+Re-run even if a current result is cached.
+.RE
+.TP
+.B mfo bench [OPTIONS] PATH
+Time the heavy pipeline stages at a given worker count (NFR-5/6/7).
+.RS
+.TP
+.B --jobs, -j
+Process this many pages concurrently (0 = auto/CPU count). Does not change results.
+.TP
+.B --stage
+Benchmark only this stage.
+.RE
+.TP
+.B mfo detect [OPTIONS] PATH
+Detect text regions on imported pages.
+.RS
+.TP
+.B --detector
+Region detector: 'baseline', 'ml', 'paddle', or 'paddle-rec'.
+.TP
+.B --merge-overlap, --no-merge-overlap
+Merge overlapping detected boxes into one region per bubble (on by default).
+.TP
+.B --overlap-frac
+Overlap (fraction of the smaller box) at which two regions merge; lower = more.
+.TP
+.B --force
+Re-detect even if a current result is cached.
+.TP
+.B --jobs, -j
+Process this many pages concurrently (0 = auto/CPU count). Does not change results.
+.RE
+.TP
+.B mfo export [OPTIONS] PATH
+Export translated pages + the source→OCR→translation mapping (FR-43, MVP-9).
+.RS
+.TP
+.B --out, -o
+Output directory.
+.TP
+.B --mapping
+Export the source→OCR→translation mapping as JSON (FR-43).
+.TP
+.B --jobs, -j
+Process this many pages concurrently (0 = auto/CPU count). Does not change results.
+.RE
+.TP
+.B mfo flag [OPTIONS] PATH
+Mark low-confidence regions for review (only automatic ones — user edits win, I-3).
+.RS
+.TP
+.B --threshold
+Confidence below which a region is flagged.
+.RE
+.TP
+.B mfo glossary add [OPTIONS] PATH SOURCE TARGET
+Add or replace a glossary entry (matched by source term).
+.RS
+.TP
+.B --alias
+Variant target spelling to normalize (repeatable).
+.TP
+.B --note
+Optional human note.
+.RE
+.TP
+.B mfo glossary list PATH
+List the project glossary entries.
+.TP
+.B mfo glossary promote PATH SOURCE
+Promote a project glossary entry into the linked series store, shared across volumes.
+.TP
+.B mfo glossary remove PATH SOURCE
+Remove a glossary entry by its source term.
+.TP
+.B mfo glossary series export PATH OUT
+Export the linked series glossary to a file for team sharing (lossless; SG-2).
+.TP
+.B mfo glossary series import [OPTIONS] PATH SRC
+Import a shared series glossary into the linked store (merge by default; SG-2).
+.RS
+.TP
+.B --replace
+Replace the linked store instead of merging into it.
+.RE
+.TP
+.B mfo glossary series link PATH STORE_PATH
+Link this project to a shared series-glossary store so its volumes inherit terms (SG-2).
+.TP
+.B mfo glossary series list PATH
+List the linked series-glossary entries.
+.TP
+.B mfo glossary series remove PATH SOURCE
+Remove an entry from the linked series glossary by its source term.
+.TP
+.B mfo group [OPTIONS] PATH
+Group ordered regions into units (offline; one unit per bubble by default — FR-19).
+.RS
+.TP
+.B --max-gap
+Chain same-type regions within this fraction of their mean height into one unit. 0 (default) = one unit per bubble; try 0.4 to merge stacked bubbles.
+.TP
+.B --force
+Recompute even if current grouping is cached.
+.RE
+.TP
+.B mfo import [OPTIONS] PATH SOURCE
+Import page images from a folder or CBZ/ZIP archive (originals never modified).
+.RS
+.TP
+.B --order
+Page ordering strategy.
+.TP
+.B --manifest
+Ordering manifest (one filename per line); implies --order manifest.
+.RE
+.TP
+.B mfo init [OPTIONS] PATH
+Create a new mfo project.
+.RS
+.TP
+.B --name
+Project name (defaults to the directory name).
+.TP
+.B --source, -s
+Source language code.
+.TP
+.B --target, -t
+Target language code.
+.TP
+.B --direction
+Reading direction.
+.TP
+.B --config, -c
+TOML config file.
+.RE
+.TP
+.B mfo models list
+List the known optional models and whether each is cached, missing, or library-managed.
+.TP
+.B mfo models path
+Show the directory optional model weights are cached in (set MFO_MODEL_DIR to change it).
+.TP
+.B mfo models pull [OPTIONS] NAME
+Fetch a downloadable asset into the model cache; explain how to provision managed ones.
+.RS
+.TP
+.B --url
+Override the download URL for a downloadable asset.
+.RE
+.TP
+.B mfo ocr [OPTIONS] PATH
+Recognize text on detected regions (default engine manga-ocr — install with mfo[ocr]).
+.RS
+.TP
+.B --engine
+OCR engine to use.
+.TP
+.B --reuse-detection, --no-reuse-detection
+Reuse text recognized during detection (e.g. by 'paddle-rec') instead of re-running OCR; --no-reuse-detection recognizes everything with --engine.
+.TP
+.B --force
+Re-run OCR even if a current result is cached.
+.TP
+.B --jobs, -j
+Process this many pages concurrently (0 = auto/CPU count). Does not change results.
+.RE
+.TP
+.B mfo ocr-correct [OPTIONS] PATH
+Suggest LLM corrections for low-confidence OCR as alternatives (opt-in; off the core path).
+.RS
+.TP
+.B --corrector
+OCR corrector adapter (MFO_AI_* / MFO_API_* env).
+.TP
+.B --threshold
+Only correct spans whose confidence is below this.
+.TP
+.B --max-alternatives
+Corrected readings to propose per span.
+.TP
+.B --force
+Re-run even if a current result is cached.
+.RE
+.TP
+.B mfo order [OPTIONS] PATH
+Infer reading order for detected regions (offline, column-aware; RTL/LTR — FR-16/17/18).
+.RS
+.TP
+.B --direction
+Reading direction (defaults to the project's).
+.TP
+.B --panels, --no-panels
+Refine order with best-effort panel detection (reads page images — FR-18).
+.TP
+.B --force
+Recompute even if a current order is cached.
+.RE
+.TP
+.B mfo preprocess [OPTIONS] PATH
+Build normalized analysis derivatives for imported pages (originals untouched).
+.RS
+.TP
+.B --grayscale
+Normalize to grayscale instead of RGB.
+.TP
+.B --max-dim
+Downscale analysis derivative to this longest edge.
+.TP
+.B --denoise
+Apply a denoising filter.
+.TP
+.B --deskew
+Estimate and correct page skew.
+.TP
+.B --force
+Recompute even if a current derivative is cached.
+.RE
+.TP
+.B mfo preset apply PATH STORE_PATH NAME
+Apply a series preset to a project: set style, link glossary, set render config (SG-4).
+.TP
+.B mfo preset list STORE_PATH
+List the presets in a series-preset store by name.
+.TP
+.B mfo preset remove STORE_PATH NAME
+Remove a preset from a series-preset store by name.
+.TP
+.B mfo preset save [OPTIONS] STORE_PATH NAME
+Define or replace a named series preset (matched by name).
+.RS
+.TP
+.B --style
+Translation register (FR-25).
+.TP
+.B --glossary
+Shared series-glossary store to link when applied (8.5).
+.TP
+.B --pad
+Render: grow each masked box by this many px.
+.TP
+.B --border
+Render: width (px) of the background-sampling ring.
+.RE
+.TP
+.B mfo render [OPTIONS] PATH
+Mask/remove source text per page into a reversible masked layer (offline; FR-31/32/33).
+.RS
+.TP
+.B --pad
+Grow each region by this many px to catch text edges.
+.TP
+.B --border
+Width (px) of the ring sampled to estimate background.
+.TP
+.B --force
+Re-mask even if a current result is cached.
+.TP
+.B --jobs, -j
+Process this many pages concurrently (0 = auto/CPU count). Does not change results.
+.RE
+.TP
+.B mfo review [OPTIONS] PATH
+Launch the local web review editor (FR-36; §13).
+.RS
+.TP
+.B --host
+Host to bind to. Use 0.0.0.0 to share on the LAN for review (SG-8).
+.TP
+.B --port
+Port to serve on.
+.TP
+.B --token
+Require this shared token on every API request (recommended when not on localhost). Reviewers open the editor at /?token=<token>.
+.RE
+.TP
+.B mfo run [OPTIONS] PATH
+Run the processing pipeline.
+.RS
+.TP
+.B --stage
+Run only this pipeline stage.
+.TP
+.B --from
+Run from this stage and everything downstream.
+.TP
+.B --to
+Run up to and including this stage.
+.TP
+.B --force
+Re-run stages even if their inputs are unchanged.
+.TP
+.B --jobs, -j
+Process this many pages concurrently (0 = auto/CPU count). Does not change results.
+.RE
+.TP
+.B mfo sample [OPTIONS] PATH
+Generate a small synthetic sample dataset for an end-to-end trial run (§21).
+.RS
+.TP
+.B --pages
+How many sample pages to generate.
+.RE
+.TP
+.B mfo sfx [OPTIONS] PATH
+Classify SFX regions and attach transliterations; set how SFX renders (offline; SG-5).
+.RS
+.TP
+.B --mode
+How to handle SFX at render: 'render' (translate like dialogue — default), 'transliterate' (typeset a romanization), or 'skip' (leave original SFX art alone).
+.TP
+.B --classifier
+SFX classifier adapter (offline 'heuristic').
+.TP
+.B --transliterator
+Transliterator adapter (offline 'kana').
+.RE
+.TP
+.B mfo status [OPTIONS] PATH
+Show project info, per-stage progress, and where confidence is low (I-4).
+.RS
+.TP
+.B --threshold
+Confidence below which a region is low.
+.RE
+.TP
+.B mfo translate [OPTIONS] PATH
+Translate units with context/glossary/style, offline (Argos default — mfo[translate]).
+.RS
+.TP
+.B --translator
+Translator: 'argos' (offline default), 'api' (OpenAI-compatible; MFO_API_* env), or 'deepl' (MFO_DEEPL_API_KEY).
+.TP
+.B --style
+Translation register (FR-25).
+.TP
+.B --force
+Re-translate even if a current result is cached.
+.TP
+.B --jobs, -j
+Process this many pages concurrently (0 = auto/CPU count). Does not change results.
+.RE
+.SH ENVIRONMENT
+.TP
+.B MFO_MODEL_DIR
+Directory optional model weights are cached in (default ~/.cache/mfo/models).
+.TP
+.B MFO_DETECTOR_MODEL_URL
+Download URL for the ONNX detector weight (used by `mfo models pull`).
+.TP
+.B MFO_API_KEY, MFO_API_URL, MFO_API_MODEL
+OpenAI-compatible translation/assist adapter config.
+.TP
+.B MFO_DEEPL_API_KEY, MFO_DEEPL_API_URL
+DeepL translation adapter config (opt-in).
+.TP
+.B MFO_AI_KEY, MFO_AI_URL, MFO_AI_MODEL
+AI assist/OCR-correction adapter config (falls back to MFO_API_*).
+.SH FILES
+.TP
+.B <project>/manifest.json
+Human-readable project header (id, languages, config, page order).
+.TP
+.B <project>/project.db
+SQLite store: regions, OCR, translations, edits, renders, history, assignments.
+.TP
+.B ~/.cache/mfo/models
+Default cache for optional model weights (override with MFO_MODEL_DIR).
+.SH SEE ALSO
+Full documentation: README.md and docs/USER_GUIDE.md in the mfo distribution.
+.SH AUTHOR
+mfo contributors.

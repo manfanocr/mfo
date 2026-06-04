@@ -103,6 +103,7 @@ Optional models (OCR/detector/translation) are managed with `mfo models` and cac
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to build, test, and contribute |
 | [CHANGELOG.md](CHANGELOG.md) | Landed batches and notable changes |
 | [CLAUDE.md](CLAUDE.md) | Guidance for AI agents working in this repo |
+| [man/mfo.1](man/mfo.1) | CLI man page (`man -l man/mfo.1`); HTML API ref via `scripts/build-docs.sh` |
 
 ## License
 

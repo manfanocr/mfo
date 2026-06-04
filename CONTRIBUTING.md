@@ -31,6 +31,18 @@ pytest --cov=mfo --cov-report=term      # optional: coverage report
 
 CI runs the same on Python 3.11–3.13; PRs must be green.
 
+## Generating docs
+
+The API reference and the CLI man page are **derived from source** — regenerate them after changing
+public APIs or CLI commands:
+
+```bash
+bash scripts/build-docs.sh
+```
+
+This writes `man/mfo.1` (the troff man page, committed; view with `man -l man/mfo.1`) and
+`docs/api/` (the pdoc HTML reference, gitignored; open `docs/api/index.html`).
+
 ## How we work
 
 1. **One batch per PR.** Keep changes scoped to a single batch from `PLAN.md`; keep `main`

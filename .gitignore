@@ -31,3 +31,6 @@ logs/
 *.swp
 .idea/
 .vscode/
+
+# Generated API reference (build with scripts/build-docs.sh)
+docs/api/
