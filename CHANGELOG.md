@@ -3,10 +3,28 @@
 All notable changes to mfo are recorded here. Landed **batches** (from [PLAN.md](PLAN.md)) are
 moved here when complete, with the spec IDs they satisfied.
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project aims
-to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reaches `0.1.0`.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] — 2026-06-04
+
+First stable release. The complete local-first manga/manhua OCR + context-aware translation
+pipeline with an interactive review editor: import (folders & CBZ/ZIP) → preprocess → detect →
+OCR → reading order → dialogue grouping → context-aware translation → mask & render → review/edit
+→ export, with full source→OCR→translation→render traceability and every stage inspectable,
+restartable, and cacheable. The core path runs fully offline; AI/cloud adapters are strictly
+opt-in. Milestones M0–M8 (MVP plus AI refinement and all SG-1…SG-10 stretch goals) are complete.
+
+### Release closeout (v1 audit & hardening)
+- **Security:** constant-time review-token comparison (`secrets.compare_digest`) so the LAN token
+  can't be recovered by timing the 401 response (SG-8, NFR-23).
+- **Tests:** added offline edge-case coverage (polygon scanline/band geometry, CLI/sample input
+  guards, `mfo run --stage <unknown>`, empty/wrong-length token rejection). 95% line coverage.
+- **Packaging & tooling:** single-sourced the version via hatch dynamic versioning; scoped strict
+  `mypy` to `src` (the documented gate); declared `pytest-cov` and `pdoc` in the dev extra; added a
+  generated CLI man page (`man/mfo.1`, via `mfo.cli.manpage`) and a pdoc HTML API reference, both
+  rebuilt with `scripts/build-docs.sh` (NFR-12, NFR-28).
+- **Docs:** audited README/CONTRIBUTING/ARCHITECTURE for v1 accuracy.
 
 ### M8 — Hardening & Stretch
 

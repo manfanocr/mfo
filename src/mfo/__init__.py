@@ -13,6 +13,6 @@ The package is organized into layers (see docs/ARCHITECTURE.md):
 - ``ui``        local review editor
 """
 
-__version__ = "0.0.0"
+__version__ = "1.0.0"
 
 __all__ = ["__version__"]

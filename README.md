@@ -12,10 +12,9 @@ required for the core workflow.
 
 ## Status
 
-🧪 **Pre-alpha, but runnable end-to-end.** The full MVP pipeline (import → detect → OCR → translate
-→ render → review → export) and the M7 AI-assist layer have landed; M8 hardening/stretch work is in
-progress. See [PLAN.md](PLAN.md) for the roadmap and [CHANGELOG.md](CHANGELOG.md) for what has
-actually shipped.
+✅ **v1.0.0 — released.** The full pipeline (import → detect → OCR → translate → render → review →
+export), the M7 AI-assist layer, and the M8 hardening/stretch goals (SG-1…SG-10) have all landed.
+See [PLAN.md](PLAN.md) for the roadmap and [CHANGELOG.md](CHANGELOG.md) for what shipped.
 
 ## What it does (target workflow)
 
