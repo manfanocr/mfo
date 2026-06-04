@@ -6,6 +6,17 @@ moved here when complete, with the spec IDs they satisfied.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] — 2026-06-04
+
+### Fixed
+- **`mypy src` failed on a clean install (CI red on 3.11–3.13).** Typer 0.26 dropped its hard
+  dependency on the standalone `click` package, so a fresh `pip install -e ".[dev]"` no longer has
+  `click` importable. `mfo.cli.manpage` imported `click` directly (and used
+  `isinstance(x, click.Group)`, which also breaks under Typer 0.26's bundled click). The man-page
+  generator now duck-types the Typer/Click command tree (`commands` for groups, `param_type_name`
+  for arguments vs options) and imports no `click`, so it works regardless of which click Typer
+  wraps. The generated `man/mfo.1` is byte-identical. (NFR-28)
+
 ## [1.0.0] — 2026-06-04
 
 First stable release. The complete local-first manga/manhua OCR + context-aware translation
