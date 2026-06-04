@@ -28,6 +28,7 @@ TRANSLATOR_GROUP = "mfo.translators"
 TRANSLITERATOR_GROUP = "mfo.transliterators"
 SFX_CLASSIFIER_GROUP = "mfo.sfx_classifiers"
 ASSISTANT_GROUP = "mfo.assistants"
+OCR_CORRECTOR_GROUP = "mfo.ocr_correctors"
 RENDERER_GROUP = "mfo.renderers"
 
 

@@ -322,6 +322,24 @@ confidence threshold.
 
 ---
 
+## LLM OCR correction (`mfo ocr-correct`, SG-7)
+
+When OCR misreads a character, an LLM can often guess the intended line. This **opt-in** path asks
+one to propose corrected *readings* for low-confidence spans — and records them as **suggestions
+only**, never overwriting the recognized text (I-3):
+
+```bash
+# Uses the same MFO_AI_* / MFO_API_* endpoint as `mfo assist` (text-only — never the page image):
+mfo ocr-correct <proj> --threshold 0.5 --max-alternatives 3
+```
+
+Each low-confidence span's text is sent to the model; the proposed readings are appended to the
+span's `alternatives`. In `mfo review`, the OCR section lists each alternative with a **Use** button —
+one click adopts it as the OCR text (the previous text stays in the list, so it's reversible). It is
+off the core path and **not** part of `mfo run`; a project that never runs it is unchanged (I-7).
+
+---
+
 ## OCR engines (`mfo ocr --engine …`)
 
 | Name | Languages | Install |

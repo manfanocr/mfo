@@ -372,6 +372,12 @@ function ocrSection(region) {
       head.append(el("span", { class: "muted", text: `· ${span.alternatives.length} alt` }));
     }
     block.append(head);
+    // Suggested alternate readings (e.g. LLM OCR corrections, SG-7): accept one with a click (I-3).
+    for (const alt of span.alternatives || []) {
+      const use = el("button", { title: "Use this reading as the OCR text", text: "Use" });
+      use.addEventListener("click", () => acceptOcrAlternative(span.span_id, alt));
+      block.append(el("div", { class: "alt-row" }, [el("span", { class: "alt-text", text: alt }), use]));
+    }
     return block;
   });
   return section("OCR", [head, ...blocks]);
@@ -650,6 +656,19 @@ async function reocrRegion() {
     status("OCR re-run.");
   } catch (err) {
     status(`OCR failed: ${err.message}`);
+  }
+}
+
+async function acceptOcrAlternative(spanId, text) {
+  const region = selectedRegion();
+  try {
+    status("Updating OCR…");
+    const view = await sendJSON("POST", `/api/ocr/${spanId}/accept`, { text });
+    applyPageView(view, region ? region.region_id : null);
+    invalidatePreview();
+    status("OCR text updated.");
+  } catch (err) {
+    status(`Update failed: ${err.message}`);
   }
 }
 

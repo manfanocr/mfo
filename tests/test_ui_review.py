@@ -23,6 +23,7 @@ from mfo.core.geometry import BBox
 from mfo.storage import ProjectStore, import_pages, list_edits, translate_units
 from mfo.ui import (
     NotFoundError,
+    accept_ocr_alternative,
     create_region,
     delete_region,
     edit_translation,
@@ -454,6 +455,28 @@ def test_reocr_region_replaces_spans(tmp_path: Path) -> None:
         spans = store.db.list(OCRSpan, where=("region_id", region.id))
         assert len(spans) == 1  # replaced, not appended
         assert spans[0].text == "さようなら"
+
+
+def test_accept_ocr_alternative_swaps_text(tmp_path: Path) -> None:
+    # SG-7: adopting a suggested reading sets it as the text; the old text stays as an alternative.
+    with _project_with_unit(tmp_path / "proj", tmp_path / "src") as store:
+        region = store.db.list(Region)[0]
+        span = store.db.list(OCRSpan, where=("region_id", region.id))[0]
+        store.db.save(span.model_copy(update={"alternatives": ["さようなら", "こんばんは"]}))
+
+        accept_ocr_alternative(store, span.id, "さようなら")
+
+        updated = store.db.get(OCRSpan, span.id)
+        assert updated.text == "さようなら"  # accepted reading is now the text
+        assert "こんにちは" in updated.alternatives  # the old text is preserved (reversible)
+        assert "さようなら" not in updated.alternatives  # the accepted one left the list
+
+
+def test_accept_ocr_alternative_rejects_unknown_text(tmp_path: Path) -> None:
+    with _project_with_unit(tmp_path / "proj", tmp_path / "src") as store:
+        span = store.db.list(OCRSpan)[0]
+        with pytest.raises(ValueError, match="not an alternative"):
+            accept_ocr_alternative(store, span.id, "never suggested")
 
 
 def test_retranslate_unit_refreshes_machine_candidate(tmp_path: Path) -> None:

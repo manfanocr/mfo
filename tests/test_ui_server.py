@@ -242,6 +242,16 @@ def test_reocr_route_runs_ocr(
     assert response.json()["regions"][0]["ocr"][0]["text"] == "ZZ"
 
 
+def test_accept_ocr_alternative_route(client: tuple[TestClient, ProjectStore]) -> None:
+    api, store = client
+    span = store.db.list(OCRSpan)[0]
+    store.db.save(span.model_copy(update={"alternatives": ["なるほど"]}))
+
+    response = api.post(f"/api/ocr/{span.id}/accept", json={"text": "なるほど"})
+    assert response.status_code == 200
+    assert store.db.get(OCRSpan, span.id).text == "なるほど"
+
+
 def test_translate_route_runs(
     client: tuple[TestClient, ProjectStore], monkeypatch: pytest.MonkeyPatch
 ) -> None:

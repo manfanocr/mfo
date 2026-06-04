@@ -192,6 +192,13 @@ def _require_region(store: ProjectStore, region_id: str) -> Region:
     return region
 
 
+def _require_span(store: ProjectStore, span_id: str) -> OCRSpan:
+    span = store.db.get(OCRSpan, span_id)
+    if span is None:
+        raise NotFoundError(f"no OCR span {span_id!r}")
+    return span
+
+
 def _order_key(region: Region) -> tuple[int, str]:
     """Reading-order sort key (unordered regions sort last, then by id for determinism)."""
     index = region.reading_order_index
@@ -395,6 +402,24 @@ def set_region_status(store: ProjectStore, region_id: str, status: str) -> dict[
         raise ValueError(f"unknown region status {status!r}; allowed: {allowed}") from None
     with history.record(store, region.page_id, "set_status"):
         store.db.save(region.model_copy(update={"status": new_status}))
+    return page_view(store, region.page_id)
+
+
+def accept_ocr_alternative(store: ProjectStore, span_id: str, text: str) -> dict[str, Any]:
+    """Adopt one of a span's alternative readings as its OCR text (SG-7); a human edit wins (I-3).
+
+    The chosen alternative (e.g. an LLM OCR correction) becomes the span's ``text``; the previous
+    text is kept among the alternatives so the change is reversible. Undoable; returns the page.
+    """
+    span = _require_span(store, span_id)
+    region = _require_region(store, span.region_id)
+    if text not in span.alternatives:
+        raise ValueError(f"{text!r} is not an alternative of span {span_id!r}")
+    # Swap: the accepted reading becomes the text; the old text joins the alternatives (front).
+    others = [alt for alt in span.alternatives if alt != text]
+    new_alternatives = [span.text, *others] if span.text and span.text not in others else others
+    with history.record(store, region.page_id, "accept_ocr_alternative"):
+        store.db.save(span.model_copy(update={"text": text, "alternatives": new_alternatives}))
     return page_view(store, region.page_id)
 
 

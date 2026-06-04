@@ -12,6 +12,16 @@ from mfo.language.assist import (
     ai_assistant,
     get_assistant,
 )
+from mfo.language.ocr_correct import (
+    DEFAULT_MAX_ALTERNATIVES,
+    LlmOcrCorrector,
+    OcrCorrection,
+    OcrCorrectionRequest,
+    OcrCorrector,
+    OcrCorrectorDependencyError,
+    get_ocr_corrector,
+    llm_ocr_corrector,
+)
 from mfo.language.translate import (
     ApiTranslator,
     ApiTranslatorConfig,
@@ -56,6 +66,15 @@ __all__ = [
     "Transliterator",
     "get_transliterator",
     "kana_transliterator",
+    # OCR correction (batch 8.9)
+    "DEFAULT_MAX_ALTERNATIVES",
+    "LlmOcrCorrector",
+    "OcrCorrection",
+    "OcrCorrectionRequest",
+    "OcrCorrector",
+    "OcrCorrectorDependencyError",
+    "get_ocr_corrector",
+    "llm_ocr_corrector",
     # assist (AI layer, batch 7.1)
     "AiAssistant",
     "AiAssistantConfig",

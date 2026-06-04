@@ -20,6 +20,7 @@ from typing import Any
 from mfo.storage.project import ProjectStore
 from mfo.ui.review import (
     NotFoundError,
+    accept_ocr_alternative,
     create_region,
     delete_region,
     edit_translation,
@@ -139,6 +140,12 @@ class SeriesPromotion(BaseModel):
     """Body for promoting a project glossary term into the shared series store (SG-3)."""
 
     source: str
+
+
+class OcrAlternative(BaseModel):
+    """Body for adopting one of an OCR span's alternative readings as its text (SG-7)."""
+
+    text: str
 
 
 # The OCR/translate engines a created region needs. Wired lazily from the project config so this
@@ -288,6 +295,10 @@ def create_app(store: ProjectStore) -> FastAPI:
             return reocr_region(store, region_id, recognize=recognize)
         except OcrDependencyError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.post("/api/ocr/{span_id}/accept")
+    def post_ocr_accept(span_id: str, body: OcrAlternative) -> dict[str, Any]:
+        return accept_ocr_alternative(store, span_id, body.text)
 
     @app.post("/api/units/{unit_id}/translate")
     def post_unit_translate(unit_id: str) -> dict[str, Any]:

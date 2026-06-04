@@ -10,6 +10,25 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it rea
 
 ### M8 — Hardening & Stretch
 
+#### Added — Batch 8.9: LLM OCR correction (2026-06-04)
+- **An opt-in LLM proposes fixes for shaky OCR — as suggestions, never edits.** Built on the M7 AI
+  plumbing: `mfo.language.ocr_correct` adds a pluggable `OcrCorrector` (NFR-17, new `mfo.ocr_correctors`
+  entry-point group) with an `LlmOcrCorrector` over the same OpenAI-compatible transport/config as the
+  AI assistant (`MFO_AI_*` → `MFO_API_*`). It sends only the recognized text line — never the page
+  image (NFR-25) — and asks for corrected *readings* of the original line (not a translation). There
+  is no offline default; nothing runs unless invoked (I-7/I-8).
+- **Suggestions land in `OCRSpan.alternatives`, recognized text is untouched (I-3).**
+  `mfo.storage.correct_ocr.correct_ocr_spans` sends each low-confidence span (unknown confidence
+  counts as low — I-4) to the corrector and appends the distinct proposed readings to that span's
+  alternatives; it never changes `text`. Page-cached via a new `Page.ocr_correction` provenance and
+  idempotent (re-running never duplicates). CLI `mfo ocr-correct [--corrector --threshold
+  --max-alternatives --force]` — off the core path and **not** part of `mfo run`.
+- **One-click accept in review.** `accept_ocr_alternative` (`POST /api/ocr/{span_id}/accept`) adopts a
+  chosen alternative as the span's text, keeping the old text among the alternatives (reversible,
+  undoable); the editor shows each alternative with a **Use** button. A project that never runs OCR
+  correction is unaffected — offline OCR is unchanged (I-7). USER_GUIDE + DATA_MODEL. (SG-7; FR-12,
+  FR-13, FR-30; I-3, I-7)
+
 #### Added — Batch 8.8: Bubble-shape-aware text wrapping (2026-06-04)
 - **Text follows the bubble shape, not just its box.** When a region carries a polygon outline
   (`Region.polygon`), the render font-fitter now wraps and fits text to the bubble *shape* so it stops

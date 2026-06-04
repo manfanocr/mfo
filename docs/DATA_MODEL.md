@@ -31,7 +31,9 @@ scoped to a panel (SG-1); `None` on the flat path.
 ### OCRSpan
 `id · region_id · text · confidence · alternatives · token_offsets?`
 OCR output, stored **separately** from translation (FR-15). Keeps confidence (FR-12) and
-alternate hypotheses when the engine provides them.
+alternate hypotheses when the engine provides them. The optional LLM OCR-correction layer (SG-7)
+appends proposed corrected readings to `alternatives` for low-confidence spans — it never changes
+`text` (I-3); the review editor can adopt one as the text in a click.
 
 ### TranslationUnit
 `id · ordered_region_ids · source_bundle · context_bundle · candidates · selected · style`

@@ -919,6 +919,48 @@ def test_run_includes_sfx_stage_once_configured(tmp_path: Path) -> None:
         assert "sfx" in build_pipeline(store).stage_names()
 
 
+def test_ocr_correct_suggests_alternatives(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # DoD (SG-7): a low-confidence span gets LLM-suggested alternatives; text is never overwritten.
+    from types import SimpleNamespace
+
+    from mfo.language.ocr_correct import OcrCorrection
+
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target), "--source", "ja", "--target", "en"])
+    with ProjectStore.open(target) as store:
+        page = Page(project_id=store.project.id, index=0, image_path="p0.png", width=10, height=10)
+        store.db.save(page)
+        region = Region(page_id=page.id, bbox=BBox(x=0, y=0, width=5, height=5))
+        store.db.save(region)
+        store.db.save(OCRSpan(region_id=region.id, text="ロ本語", confidence=0.2))
+
+    import importlib
+
+    app_module = importlib.import_module("mfo.cli.app")
+
+    fake = SimpleNamespace(
+        name="fake",
+        version="1",
+        correct=lambda request: OcrCorrection(alternatives=["日本語"]),
+    )
+    monkeypatch.setattr(app_module, "get_ocr_corrector", lambda _name: fake)
+
+    result = runner.invoke(app, ["ocr-correct", str(target), "--corrector", "fake"])
+    assert result.exit_code == 0, result.stdout
+
+    with ProjectStore.open(target) as store:
+        span = store.db.list(OCRSpan)[0]
+        assert span.text == "ロ本語"  # recognized text untouched
+        assert span.alternatives == ["日本語"]
+
+
+def test_ocr_correct_unknown_corrector_exits_1(tmp_path: Path) -> None:
+    target = tmp_path / "vol"
+    runner.invoke(app, ["init", str(target)])
+    result = runner.invoke(app, ["ocr-correct", str(target), "--corrector", "nope"])
+    assert result.exit_code == 1
+
+
 def test_run_includes_translate_stage_once_ocr_configured(tmp_path: Path) -> None:
     target = tmp_path / "vol"
     runner.invoke(app, ["init", str(target)])

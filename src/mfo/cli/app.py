@@ -82,6 +82,12 @@ from mfo.language import (
     get_assistant,
     get_translator,
 )
+from mfo.language.ocr_correct import (
+    DEFAULT_MAX_ALTERNATIVES,
+    OcrCorrectionRequest,
+    OcrCorrectorDependencyError,
+    get_ocr_corrector,
+)
 from mfo.language.transliterate import get_transliterator
 from mfo.render import MaskConfig, mask_file
 from mfo.storage import (
@@ -94,6 +100,7 @@ from mfo.storage import (
     assist_units,
     composite_pages,
     confidence_report,
+    correct_ocr_spans,
     detect_regions,
     export_pages,
     flag_low_confidence,
@@ -561,6 +568,59 @@ def assist(
             typer.secho(str(exc), fg=typer.colors.RED, err=True)
             raise typer.Exit(code=1) from None
     typer.secho(f"AI {mode.value}: processed {len(units)} unit(s).", fg=typer.colors.GREEN)
+
+
+@app.command(name="ocr-correct")
+def ocr_correct(
+    path: Annotated[Path, typer.Argument(help="Project directory.")],
+    corrector: Annotated[
+        str, typer.Option("--corrector", help="OCR corrector adapter (MFO_AI_* / MFO_API_* env).")
+    ] = "llm",
+    threshold: Annotated[
+        float,
+        typer.Option("--threshold", help="Only correct spans whose confidence is below this."),
+    ] = DEFAULT_THRESHOLD,
+    max_alternatives: Annotated[
+        int,
+        typer.Option("--max-alternatives", min=1, help="Corrected readings to propose per span."),
+    ] = DEFAULT_MAX_ALTERNATIVES,
+    force: Annotated[
+        bool, typer.Option("--force", help="Re-run even if a current result is cached.")
+    ] = False,
+) -> None:
+    """Suggest LLM corrections for low-confidence OCR as alternatives (opt-in; off the core path).
+
+    Never overwrites recognized text — it only proposes alternate readings for review (I-3). Off by
+    default and not part of ``mfo run``; the offline pipeline is unaffected (I-7, SG-7).
+    """
+    try:
+        engine = get_ocr_corrector(corrector)
+    except ValueError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from None
+    signature = f"{engine.name}@{engine.version}"
+    with _open_store(path) as store:
+        source_lang = store.project.source_lang
+        try:
+            spans = correct_ocr_spans(
+                store,
+                correct=lambda text: (
+                    engine.correct(
+                        OcrCorrectionRequest(
+                            text=text, source_lang=source_lang, max_alternatives=max_alternatives
+                        )
+                    ).alternatives
+                ),
+                signature=signature,
+                threshold=threshold,
+                force=force,
+            )
+        except OcrCorrectorDependencyError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from None
+    typer.secho(
+        f"OCR correction: suggested alternatives for {len(spans)} span(s).", fg=typer.colors.GREEN
+    )
 
 
 glossary_app = typer.Typer(

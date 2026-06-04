@@ -12,6 +12,7 @@ from mfo.storage.confidence import (
     low_confidence_regions,
     region_confidences,
 )
+from mfo.storage.correct_ocr import Correct, correct_ocr_spans
 from mfo.storage.db import SCHEMA_VERSION, Database
 from mfo.storage.detect import RegionCandidate, detect_regions
 from mfo.storage.edits import list_edits, record_edit
@@ -110,6 +111,9 @@ __all__ = [
     "classify_sfx_regions",
     "process_sfx",
     "transliterate_sfx_units",
+    # ocr correction (SG-7)
+    "Correct",
+    "correct_ocr_spans",
     # grouping
     "group_into_units",
     # translate

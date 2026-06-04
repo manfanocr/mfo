@@ -453,13 +453,20 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
   through (chained units stay box-fit), folded into the render cache signature. No polygon → the box
   path is untouched and byte-identical (no regression). USER_GUIDE + DATA_MODEL. See CHANGELOG.
 
-### Batch 8.9 — LLM OCR correction (SG-7)
+### Batch 8.9 — LLM OCR correction (SG-7) ✅ *(landed 2026-06-04)*
 - **Scope:** An **opt-in** assist path (built on the M7 AI layer) that proposes corrections for
   low-confidence OCR, surfaced as `OCRSpan.alternatives` / review suggestions — never overwriting the
   recognized text (I-3). Off the core path; text-only, no page image (NFR-25).
 - **Satisfies:** SG-7; FR-12, FR-13, FR-30; I-3, I-7.
 - **DoD:** A low-confidence span gets LLM-suggested alternatives visible in review and acceptable
   with one click; disabled by default; offline OCR unaffected.
+- **Shipped:** `mfo.language.ocr_correct` (`OcrCorrector` adapter + `LlmOcrCorrector` over the shared
+  AI transport/config, new `mfo.ocr_correctors` group; text-only, env-only, no offline default);
+  `mfo.storage.correct_ocr.correct_ocr_spans` appends proposed readings to low-confidence spans'
+  `alternatives` (never the text — I-3; page-cached, idempotent/dedup); `Page.ocr_correction`
+  provenance. CLI `mfo ocr-correct` (off `mfo run`); review `accept_ocr_alternative` + `POST
+  /api/ocr/{id}/accept` and a one-click **Use** button per alternative in the editor. Disabled by
+  default; a project that never runs it is unaffected (I-7). USER_GUIDE + DATA_MODEL. See CHANGELOG.
 
 ### Batch 8.10 — LAN & collaborative review (SG-8, SG-10)
 - **Scope:** Serve the review editor on the local network (`mfo review --host`, optional token auth)
@@ -491,7 +498,7 @@ needs polygons on `Region` (present) → 8.10 needs the edit log + history (M6/B
 - [x] M6 Review Editor *(MVP complete — M0–M6 satisfy the DoD §21)*
 - [x] M7 AI Refinement *(7.1 assist adapter, 7.2 modes, 7.3 confidence-driven review)*
 - [ ] M8 Hardening & Stretch *(planned into batches 8.0–8.11; 8.0 fused detect+recognize, 8.1 parallel processing, 8.2 archive import, 8.3 plugin system, 8.4 panel-aware context, 8.5 cross-volume glossary, 8.6 per-series style presets, 8.7 SFX
-detection & transliteration, 8.8 bubble-shape-aware wrapping landed)*
+detection & transliteration, 8.8 bubble-shape-aware wrapping, 8.9 LLM OCR correction landed)*
 
 When a batch lands: tick it, and append a dated entry to [CHANGELOG.md](CHANGELOG.md) with the
 spec IDs it satisfied.

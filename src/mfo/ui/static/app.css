@@ -557,6 +557,25 @@ h2 {
   font-size: 12px;
 }
 
+/* Suggested OCR alternate readings (SG-7): the text plus a one-click "Use" button. */
+.alt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.alt-row .alt-text {
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.alt-row button {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
 .btn-row button.primary {
   background: var(--accent);
   color: var(--accent-fg);

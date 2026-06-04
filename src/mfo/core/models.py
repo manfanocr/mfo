@@ -81,6 +81,9 @@ class Page(MfoModel):
     # AI-assist provenance (assistant id + mode + units sig), for cache/skip (NFR-8); empty until
     # the optional AI layer runs (I-7).
     assist: dict[str, Any] = Field(default_factory=dict)
+    # LLM OCR-correction provenance (corrector id + threshold + spans sig), for cache/skip (NFR-8);
+    # empty until the optional, opt-in OCR-correction layer runs (SG-7, I-7).
+    ocr_correction: dict[str, Any] = Field(default_factory=dict)
 
 
 class Region(MfoModel):

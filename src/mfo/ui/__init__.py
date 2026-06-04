@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from mfo.ui.review import (
     NotFoundError,
+    accept_ocr_alternative,
     create_region,
     delete_region,
     edit_translation,
@@ -50,6 +51,7 @@ __all__ = [
     "create_region",
     "delete_region",
     "reocr_region",
+    "accept_ocr_alternative",
     "retranslate_unit",
     "review_queue",
     "undo_edit",
